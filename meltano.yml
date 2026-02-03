@@ -1,0 +1,25 @@
+version: 1
+send_anonymous_usage_stats: false
+project_id: tap-aptem
+default_environment: test
+environments:
+- name: test
+plugins:
+  extractors:
+  - name: tap-aptem
+    namespace: tap_aptem
+    python: python3.10
+    pip_url: -e .
+    executable: tap-aptem
+    capabilities:
+    - state
+    - catalog
+    - discover
+    - about
+    - stream-maps
+    settings_group_validation:
+    - [api_key, tenant_name]
+    settings:
+    - name: api_token
+    - name: tenant_name
+    - name: start_date

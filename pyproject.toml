@@ -1,0 +1,77 @@
+[project]
+name = "tap-aptem"
+version = "0.0.1"
+description = "Singer tap for Aptem, built with the Meltano Singer SDK."
+readme = "README.md"
+authors = [{ name = "Reuben Frankel", email = "rfrankel@matatika.com" }]
+keywords = [
+    "ELT",
+    "Aptem",
+    "OData",
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "defusedxml~=0.7.1",
+    "singer-sdk~=0.53.5",
+    "requests~=2.32.5",
+]
+
+[project.optional-dependencies]
+
+[project.scripts]
+# CLI declaration
+tap-aptem = 'tap_aptem.tap:TapAptem.cli'
+
+[dependency-groups]
+dev = [
+    { include-group = "test" },
+]
+test = [
+    "pytest>=8",
+    "pytest-github-actions-annotate-failures>=0.3",
+    "singer-sdk[testing]",
+]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--durations=10",
+]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+ignore = [
+    "ANN001",  # missing-type-function-argument
+    "ANN002",  # missing-type-args
+    "ANN003",  # missing-type-kwargs
+    "ANN201",  # missing-return-type-undocumented-public-function
+    "ANN202",  # missing-return-type-private-function
+    "COM812",  # missing-trailing-comma
+]
+select = ["ALL"]
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[build-system]
+requires = [
+    "hatchling>=1,<2",
+]
+build-backend = "hatchling.build"
