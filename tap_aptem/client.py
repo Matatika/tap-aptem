@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+from http import HTTPStatus
+from typing import TYPE_CHECKING
+
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream
 from typing_extensions import override
+
+if TYPE_CHECKING:
+    import requests
+
+
+class _ResumableAPIError(Exception):
+    def __init__(self, message: str, response: requests.Response) -> None:
+        super().__init__(message)
+        self.response = response
 
 
 class AptemODataStream(RESTStream):
@@ -41,6 +53,13 @@ class AptemODataStream(RESTStream):
         )
 
     @override
+    def get_records(self, context):
+        try:
+            yield from super().get_records(context)
+        except _ResumableAPIError as e:
+            self.logger.warning(e)
+
+    @override
     def get_new_paginator(self):
         return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
@@ -60,3 +79,15 @@ class AptemODataStream(RESTStream):
             )
 
         return params
+
+    @override
+    def validate_response(self, response):
+        if response.status_code == HTTPStatus.FORBIDDEN or (
+            response.status_code == HTTPStatus.BAD_REQUEST
+            and "An error occured while executing requested action"
+            in response.json()["error"]["message"]
+        ):
+            msg = self.response_error_message(response)
+            raise _ResumableAPIError(msg, response)
+
+        super().validate_response(response)
