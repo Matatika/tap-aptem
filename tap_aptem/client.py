@@ -14,6 +14,13 @@ class AptemODataStream(RESTStream):
     page_size = 100_000
     records_jsonpath = "$.value[*]"
 
+    # timestamps are sometimes returned with different ms grains causing the sorted
+    # check (str > str) to fail, despite being ordered correctly
+    #
+    # >>> "2025-11-25T10:57:52.6880167Z" > "2025-11-25T10:57:52.68Z"
+    # False
+    check_sorted = False
+
     @override
     @property
     def is_sorted(self):
