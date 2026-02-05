@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING
 
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.pagination import BaseOffsetPaginator
-from singer_sdk.streams import RESTStream
+from singer_sdk.streams import RESTStream, Stream
 from typing_extensions import override
+
+from tap_aptem import hiddendict
 
 if TYPE_CHECKING:
     import requests
@@ -17,6 +19,7 @@ if TYPE_CHECKING:
 ENTITY_RECORD_LIMITS = {
     "LearningPlanEvidences": 5000,
     "ReviewResponses": 5000,
+    "Users": 1000,
 }
 
 
@@ -37,6 +40,8 @@ class AptemODataStream(RESTStream):
     # >>> "2025-11-25T10:57:52.6880167Z" > "2025-11-25T10:57:52.68Z"
     # False
     check_sorted = False
+
+    entity_name: str
 
     @property
     def page_size(self):
@@ -89,6 +94,9 @@ class AptemODataStream(RESTStream):
                 f"{self.replication_key} ge {starting_timestamp.isoformat()}"
             )
 
+        if self.child_streams:
+            params["$expand"] = ",".join(cs.name for cs in self.child_streams)
+
         return params
 
     @override
@@ -102,3 +110,29 @@ class AptemODataStream(RESTStream):
             raise _ResumableAPIError(msg, response)
 
         super().validate_response(response)
+
+    @override
+    def get_child_context(self, record, context):
+        if not self.child_streams:
+            return super().get_child_context(record, context)
+
+        return {
+            **{self.entity_name + pk: record[pk] for pk in self.primary_keys},
+            self.entity_name: hiddendict(record),
+        }
+
+
+class EmbeddedCollectionStream(Stream):
+    """Embedded collection stream for inline related resources."""
+
+    state_partitioning_keys = ()  # do not store any state bookmarks
+
+    parent_entity_name: str
+    collection_name: str
+
+    @override
+    def get_records(self, context):
+        base_record = {**context}
+
+        for record in base_record.pop(self.parent_entity_name)[self.collection_name]:
+            yield base_record | record

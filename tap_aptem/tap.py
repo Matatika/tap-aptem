@@ -8,7 +8,7 @@ from singer_sdk import typing as th
 from typing_extensions import override
 
 from tap_aptem import metadata
-from tap_aptem.client import AptemODataStream
+from tap_aptem.client import AptemODataStream, EmbeddedCollectionStream
 
 
 class TapAptem(Tap):
@@ -44,21 +44,42 @@ class TapAptem(Tap):
         response = requests.get(url, timeout=300)
         response.raise_for_status()
 
-        streams = []
+        streams_by_entity_name: dict[str,] = {}
 
-        for e in metadata.discover_entities(response.text):
-            stream = AptemODataStream(
+        for entity in metadata.discover_entities(response.text):
+            if parent_stream := streams_by_entity_name.get(entity.parent_entity_name):
+                stream_cls = type(
+                    f"{entity.collection_name}EmbeddedStream",
+                    (EmbeddedCollectionStream,),
+                    {
+                        "parent_stream_type": type(parent_stream),
+                        "parent_entity_name": entity.parent_entity_name,
+                        "collection_name": entity.collection_name,
+                    },
+                )
+
+            else:
+                stream_cls = type(
+                    f"{entity.name}AptemODataStream",
+                    (AptemODataStream,),
+                    {
+                        "entity_name": entity.name,
+                        "path": f"/{entity.collection_name}",
+                    },
+                )
+
+            stream = stream_cls(
                 tap=self,
-                name=e.name,
-                schema=e.jsonschema,
-                path=f"/{e.name}",
+                name=entity.collection_name,
+                schema=entity.jsonschema,
             )
-            stream.primary_keys = e.primary_keys
-            stream.replication_key = e.replication_key
 
-            streams.append(stream)
+            stream.primary_keys = entity.primary_keys
+            stream.replication_key = entity.replication_key
 
-        return streams
+            streams_by_entity_name[entity.name] = stream
+
+        return streams_by_entity_name.values()
 
 
 if __name__ == "__main__":

@@ -42,12 +42,15 @@ class ComplexType:
 class EntityInfo:
     name: str
     properties: dict[str, str]
+    navigation_properties: dict[str, str]
     keys: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class DiscoveredEntity:
     name: str
+    collection_name: str
+    parent_entity_name: str | None
     jsonschema: dict
     primary_keys: tuple[str, ...]
     replication_key: str
@@ -69,10 +72,10 @@ def _iter_schema_elements(root: ElementTree):
             yield element, element.attrib["Namespace"]
 
 
-def _extract_properties(type_element: Element):
+def _extract_properties(type_element: Element, tag: str = "Property"):
     return {
         prop.attrib["Name"]: prop.attrib["Type"]
-        for prop in _iter_children_by_name(type_element, "Property")
+        for prop in _iter_children_by_name(type_element, tag)
     }
 
 
@@ -124,6 +127,10 @@ def _extract_entities_by_type(root: ElementTree):
             entities_by_type[entity_id] = EntityInfo(
                 name=entity_type_name,
                 properties=_extract_properties(entity_type),
+                navigation_properties=_extract_properties(
+                    entity_type,
+                    "NavigationProperty",
+                ),
                 keys=tuple(keys),
             )
 
@@ -161,17 +168,57 @@ def discover_entities(xml: str):
     entity_sets_by_type = _extract_entity_sets_by_type(root)
     entities_by_type = _extract_entities_by_type(root)
 
-    for entity_type_name, entity_set_name in entity_sets_by_type.items():
-        entity = entities_by_type[entity_type_name]
+    def _discover_entity(
+        entity_collection_name: str,
+        entity: EntityInfo,
+        parent_entity: EntityInfo | None = None,
+    ):
+        properties = entity.properties.copy()
+        primary_keys = list(entity.keys)
 
-        properties = list(_properties_to_jsonschema(entity.properties, complex_types))
+        if parent_entity:
+            # apply parent key properties
+            for key in parent_entity.keys:
+                parent_key = parent_entity.name + key
 
-        yield DiscoveredEntity(
-            name=entity_set_name,
-            jsonschema=th.PropertiesList(*properties).to_dict(),
-            primary_keys=entity.keys,
+                properties.setdefault(
+                    parent_key,
+                    parent_entity.properties[key],
+                )
+
+                primary_keys.append(parent_key)
+
+        jsonschema = th.PropertiesList(
+            *_properties_to_jsonschema(properties, complex_types)
+        ).to_dict()
+
+        return DiscoveredEntity(
+            name=entity.name,
+            collection_name=entity_collection_name,
+            parent_entity_name=parent_entity and parent_entity.name,
+            jsonschema=jsonschema,
+            primary_keys=tuple(primary_keys),
             replication_key=next(
-                (p.name for p in properties if p.name == "UpdatedDate"),
+                (p for p in jsonschema["properties"] if p == "UpdatedDate"),
                 None,
             ),
         )
+
+    for entity_type_name, entity_collection_name in entity_sets_by_type.items():
+        entity = entities_by_type[entity_type_name]
+        yield _discover_entity(entity_collection_name, entity)
+
+        for (
+            embedded_entity_collection_name,
+            collection_type_name,
+        ) in entity.navigation_properties.items():
+            embedded_entity_type_name = collection_type_name.removeprefix(
+                "Collection("
+            ).removesuffix(")")
+
+            # do not shadow available entity sets
+            if embedded_entity_collection_name in entity_sets_by_type.values():
+                continue
+
+            embedded_entity = entities_by_type[embedded_entity_type_name]
+            yield _discover_entity(embedded_entity_collection_name, embedded_entity, entity)
