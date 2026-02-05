@@ -95,8 +95,10 @@ class AptemODataStream(RESTStream):
                 f"{self.replication_key} ge {starting_timestamp.isoformat()}"
             )
 
-        if self.child_streams:
-            params["$expand"] = ",".join(cs.name for cs in self.child_streams)
+        if selected_child_streams := [
+            cs.name for cs in self.child_streams if cs.selected
+        ]:
+            params["$expand"] = ",".join(selected_child_streams)
 
         return params
 
