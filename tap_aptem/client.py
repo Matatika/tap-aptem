@@ -6,6 +6,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from singer_sdk.authenticators import APIKeyAuthenticator
+from singer_sdk.exceptions import RetriableAPIError
 from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream, Stream
 from typing_extensions import override
@@ -101,11 +102,14 @@ class AptemODataStream(RESTStream):
 
     @override
     def validate_response(self, response):
-        if response.status_code == HTTPStatus.FORBIDDEN or (
+        if (
             response.status_code == HTTPStatus.BAD_REQUEST
-            and "An error occured while executing requested action"
-            in response.json()["error"]["message"]
+            and "Try again" in response.json()["error"]["message"]
         ):
+            msg = self.response_error_message(response)
+            raise RetriableAPIError(msg, response)
+
+        if response.status_code == HTTPStatus.FORBIDDEN:
             msg = self.response_error_message(response)
             raise _ResumableAPIError(msg, response)
 
