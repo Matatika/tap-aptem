@@ -10,6 +10,42 @@ from typing_extensions import override
 from tap_aptem import metadata
 from tap_aptem.client import AptemODataStream, EmbeddedCollectionStream
 
+STREAM_REPLICATION_KEYS = {
+    "AimWorkPlacements": "WorkPlaceStartDate",
+    "ApprenticeshipFinancialRecords": "Date",
+    "AptemCognitiveAssessments": "DateStart",
+    "AwardingBodyQualifications": "UpdatedDate",
+    "AwardingBodyQualificationsAssessmentHistory": "Date",
+    "ComplianceDocuments": "Date",
+    "ComponentDueDateChanges": "ChangeDate",
+    "CrmActivities": "UpdatedDate",
+    "DestinationProgressions": "StartDate",
+    "EmployerGroups": "UpdatedDate",
+    "EPAErrors": "Date",
+    "Episodes": "UpdatedDate",
+    "Groups": "UpdatedDate",
+    "IlrAims": "UpdatedDate",
+    "IlrLearner": "UpdatedDate",
+    "Jobs": "UpdatedDate",
+    "LearnerEmployment": "EmploymentStartDate",
+    "LearningPlanComponents": "UpdatedDate",
+    "LearningPlanEvidences": "SubmissionDate",
+    "MaximumProgrammeDataFields": None,
+    "Messages": "CreatedDate",
+    "Milestones": None,
+    "Notes": "Date",
+    "OnboardingResponses": "Date",
+    "OrganizationContacts": None,
+    "Organizations": "UpdatedDate",
+    "ReviewResponses": "Date",
+    "Reviews": "UpdatedDate",
+    "Tasks": "CreatedDate",
+    "Trackers": "UpdatedDate",
+    "Users": "UpdatedDate",
+    "UserGroups": None,
+    "WithdrawalReasons": "DateAdded",
+}
+
 
 class TapAptem(Tap):
     """Singer tap for the Aptem OData API."""
@@ -75,7 +111,19 @@ class TapAptem(Tap):
             )
 
             stream.primary_keys = entity.primary_keys
-            stream.replication_key = entity.replication_key
+
+            try:
+                replication_key = STREAM_REPLICATION_KEYS[stream.name]
+            except KeyError:
+                if isinstance(stream, AptemODataStream):
+                    self.logger.warning(
+                        "No replication key defined for %s",
+                        stream.name,
+                    )
+
+                replication_key = None
+
+            stream.replication_key = replication_key
 
             streams_by_entity_name[entity.name] = stream
 

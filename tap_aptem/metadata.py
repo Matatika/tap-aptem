@@ -53,7 +53,6 @@ class DiscoveredEntity:
     parent_entity_name: str | None
     jsonschema: dict
     primary_keys: tuple[str, ...]
-    replication_key: str
 
 
 def _local_name(tag: str):
@@ -198,10 +197,6 @@ def discover_entities(xml: str):
             parent_entity_name=parent_entity and parent_entity.name,
             jsonschema=jsonschema,
             primary_keys=tuple(primary_keys),
-            replication_key=next(
-                (p for p in jsonschema["properties"] if p == "UpdatedDate"),
-                None,
-            ),
         )
 
     for entity_type_name, entity_collection_name in entity_sets_by_type.items():
