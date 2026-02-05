@@ -14,6 +14,12 @@ if TYPE_CHECKING:
     import requests
 
 
+ENTITY_RECORD_LIMITS = {
+    "LearningPlanEvidences": 5000,
+    "ReviewResponses": 5000,
+}
+
+
 class _ResumableAPIError(Exception):
     def __init__(self, message: str, response: requests.Response) -> None:
         super().__init__(message)
@@ -23,7 +29,6 @@ class _ResumableAPIError(Exception):
 class AptemODataStream(RESTStream):
     """Aptem OData stream class."""
 
-    page_size = 100_000
     records_jsonpath = "$.value[*]"
 
     # timestamps are sometimes returned with different ms grains causing the sorted
@@ -32,6 +37,11 @@ class AptemODataStream(RESTStream):
     # >>> "2025-11-25T10:57:52.6880167Z" > "2025-11-25T10:57:52.68Z"
     # False
     check_sorted = False
+
+    @property
+    def page_size(self):
+        """Number of entity records to request at a time."""
+        return ENTITY_RECORD_LIMITS.get(self.name, 100_000)
 
     @override
     @property
@@ -67,6 +77,7 @@ class AptemODataStream(RESTStream):
     def get_url_params(self, context, next_page_token):
         params = super().get_url_params(context, next_page_token)
         params["$top"] = self.page_size
+
         if next_page_token is not None:
             params["$skip"] = next_page_token
 
