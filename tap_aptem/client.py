@@ -100,6 +100,15 @@ class AptemODataStream(RESTStream):
         ]:
             params["$expand"] = ",".join(selected_child_streams)
 
+        selected_columns = [
+            column_name
+            for column_name in self.schema["properties"]
+            if self.mask[("properties", column_name)]
+        ]
+
+        if selected_columns:
+            params["$select"] = ",".join(selected_columns)
+
         return params
 
     @override
@@ -114,6 +123,11 @@ class AptemODataStream(RESTStream):
         if response.status_code == HTTPStatus.FORBIDDEN:
             msg = self.response_error_message(response)
             raise _ResumableAPIError(msg, response)
+
+        if response.status_code == HTTPStatus.REQUEST_URI_TOO_LONG:
+            self.logger.error(
+                "Too many properties requested - reduce selection and try again"
+            )
 
         super().validate_response(response)
 
