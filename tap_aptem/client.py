@@ -124,6 +124,11 @@ class AptemODataStream(RESTStream):
             msg = self.response_error_message(response)
             raise _ResumableAPIError(msg, response)
 
+        if response.status_code == HTTPStatus.REQUEST_URI_TOO_LONG:
+            self.logger.error(
+                "Too many properties requested - reduce selection and try again"
+            )
+
         super().validate_response(response)
 
     @override
