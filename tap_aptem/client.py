@@ -100,12 +100,12 @@ class AptemODataStream(RESTStream):
         ]:
             params["$expand"] = ",".join(selected_child_streams)
 
-        schema_properties = self.schema.get("properties", {})
         selected_columns = [
             column_name
-            for column_name in schema_properties
+            for column_name in self.schema["properties"]
             if self.mask[("properties", column_name)]
         ]
+
         if selected_columns:
             params["$select"] = ",".join(selected_columns)
 
