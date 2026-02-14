@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.exceptions import RetriableAPIError
+from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream, Stream
 from typing_extensions import override
 
@@ -78,6 +79,9 @@ class AptemODataStream(RESTStream):
 
     @override
     def get_new_paginator(self):
+        if not self.replication_key:
+            return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
+
         def get_replication_key_value(response: requests.Response):  # noqa: ARG001
             state = self.get_context_state(self.context)
 
@@ -96,7 +100,16 @@ class AptemODataStream(RESTStream):
         if self.replication_key:
             params["$orderby"] = self.replication_key
 
-        if timestamp := next_page_token or self.get_starting_timestamp(context):
+        if isinstance(next_page_token, int):
+            params["$skip"] = next_page_token
+
+        timestamp = (
+            next_page_token
+            if isinstance(next_page_token, datetime)
+            else self.get_starting_timestamp(context)
+        )
+
+        if timestamp:
             params["$filter"] = f"{self.replication_key} ge {timestamp.isoformat()}"
 
         if selected_child_streams := [
