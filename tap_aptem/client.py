@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.exceptions import RetriableAPIError
-from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream, Stream
 from typing_extensions import override
 
 from tap_aptem import hiddendict
+from tap_aptem.pagination import CallbackPaginator
 
 if TYPE_CHECKING:
     import requests
@@ -77,23 +78,26 @@ class AptemODataStream(RESTStream):
 
     @override
     def get_new_paginator(self):
-        return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
+        def get_replication_key_value(response: requests.Response):  # noqa: ARG001
+            state = self.get_context_state(self.context)
+
+            if replication_key_value := state.get("replication_key_value"):
+                return datetime.fromisoformat(replication_key_value)
+
+            return None
+
+        return CallbackPaginator(get_replication_key_value)
 
     @override
     def get_url_params(self, context, next_page_token):
         params = super().get_url_params(context, next_page_token)
         params["$top"] = self.page_size
 
-        if next_page_token is not None:
-            params["$skip"] = next_page_token
-
         if self.replication_key:
             params["$orderby"] = self.replication_key
 
-        if starting_timestamp := self.get_starting_timestamp(context):
-            params["$filter"] = (
-                f"{self.replication_key} ge {starting_timestamp.isoformat()}"
-            )
+        if timestamp := next_page_token or self.get_starting_timestamp(context):
+            params["$filter"] = f"{self.replication_key} ge {timestamp.isoformat()}"
 
         if selected_child_streams := [
             cs.name for cs in self.child_streams if cs.selected
