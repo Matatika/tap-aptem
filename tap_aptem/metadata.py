@@ -216,4 +216,9 @@ def discover_entities(xml: str):
                 continue
 
             embedded_entity = entities_by_type[embedded_entity_type_name]
-            yield _discover_entity(embedded_entity_collection_name, embedded_entity, entity)
+
+            yield _discover_entity(
+                embedded_entity_collection_name,
+                embedded_entity,
+                entity,
+            )
