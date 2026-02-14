@@ -4,7 +4,7 @@ import datetime
 
 from singer_sdk.testing import get_tap_test_class
 
-from tap_bing_ads.tap import TapBingAds
+from tap_aptem.tap import TapAptem
 
 SAMPLE_CONFIG = {
     "start_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
@@ -13,8 +13,8 @@ SAMPLE_CONFIG = {
 
 
 # Run standard built-in tap tests from the SDK:
-TestTapBingAds = get_tap_test_class(
-    tap_class=TapBingAds,
+TestTapAptem = get_tap_test_class(
+    tap_class=TapAptem,
     config=SAMPLE_CONFIG,
 )
 
