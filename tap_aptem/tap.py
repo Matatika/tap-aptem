@@ -12,7 +12,7 @@ from tap_aptem.client import AptemODataStream, EmbeddedCollectionStream
 
 STREAM_REPLICATION_KEYS = {
     "AimWorkPlacements": "WorkPlaceStartDate",
-    "ApprenticeshipFinancialRecords": "Date",
+    "ApprenticeshipFinancialRecords": None,
     "AptemCognitiveAssessments": "DateStart",
     "AwardingBodyQualifications": "UpdatedDate",
     "AwardingBodyQualificationsAssessmentHistory": "Date",
@@ -127,7 +127,7 @@ class TapAptem(Tap):
 
             streams_by_entity_name[entity.name] = stream
 
-        return streams_by_entity_name.values()
+        return [streams_by_entity_name["ApprenticeshipFinancialRecord"]]
 
 
 if __name__ == "__main__":
