@@ -99,17 +99,17 @@ class AptemODataStream(RESTStream):
         if self.replication_key:
             params["$orderby"] = self.replication_key
 
+        if starting_timestamp := self.get_starting_timestamp(context):
+            params["$filter"] = (
+                f"{self.replication_key} ge {starting_timestamp.isoformat()}"
+            )
+
         if isinstance(next_page_token, int):
             params["$skip"] = next_page_token
-
-        timestamp = (
-            next_page_token
-            if isinstance(next_page_token, datetime)
-            else self.get_starting_timestamp(context)
-        )
-
-        if timestamp:
-            params["$filter"] = f"{self.replication_key} ge {timestamp.isoformat()}"
+        elif isinstance(next_page_token, datetime):
+            params["$filter"] = (
+                f"{self.replication_key} gt {next_page_token.isoformat()}"
+            )
 
         if selected_child_streams := [
             cs.name for cs in self.child_streams if cs.selected
