@@ -1,1 +1,1 @@
-"""Test suite for tap-bing-ads."""
+"""Test suite for tap-aptem."""
