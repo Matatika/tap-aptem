@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from singer_sdk.authenticators import APIKeyAuthenticator
-from singer_sdk.exceptions import RetriableAPIError
 from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream, Stream
 from typing_extensions import override
 
 from tap_aptem import hiddendict
+from tap_aptem.pagination import CallbackPaginator
 
 if TYPE_CHECKING:
     import requests
@@ -77,23 +78,38 @@ class AptemODataStream(RESTStream):
 
     @override
     def get_new_paginator(self):
-        return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
+        if not self.replication_key:
+            return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
+
+        def get_replication_key_value(response: requests.Response):  # noqa: ARG001
+            state = self.get_context_state(self.context)
+
+            if replication_key_value := state.get("replication_key_value"):
+                return datetime.fromisoformat(replication_key_value)
+
+            return None
+
+        return CallbackPaginator(get_replication_key_value)
 
     @override
     def get_url_params(self, context, next_page_token):
         params = super().get_url_params(context, next_page_token)
         params["$top"] = self.page_size
 
-        if next_page_token is not None:
-            params["$skip"] = next_page_token
-
         if self.replication_key:
             params["$orderby"] = self.replication_key
 
-        if starting_timestamp := self.get_starting_timestamp(context):
-            params["$filter"] = (
-                f"{self.replication_key} ge {starting_timestamp.isoformat()}"
-            )
+        if isinstance(next_page_token, int):
+            params["$skip"] = next_page_token
+
+        timestamp = (
+            next_page_token
+            if isinstance(next_page_token, datetime)
+            else self.get_starting_timestamp(context)
+        )
+
+        if timestamp:
+            params["$filter"] = f"{self.replication_key} ge {timestamp.isoformat()}"
 
         if selected_child_streams := [
             cs.name for cs in self.child_streams if cs.selected
@@ -113,13 +129,6 @@ class AptemODataStream(RESTStream):
 
     @override
     def validate_response(self, response):
-        if (
-            response.status_code == HTTPStatus.BAD_REQUEST
-            and "Try again" in response.json()["error"]["message"]
-        ):
-            msg = self.response_error_message(response)
-            raise RetriableAPIError(msg, response)
-
         if response.status_code == HTTPStatus.FORBIDDEN:
             msg = self.response_error_message(response)
             raise _ResumableAPIError(msg, response)
