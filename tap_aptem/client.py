@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
@@ -83,11 +82,7 @@ class AptemODataStream(RESTStream):
 
         def get_replication_key_value(response: requests.Response):  # noqa: ARG001
             state = self.get_context_state(self.context)
-
-            if replication_key_value := state.get("replication_key_value"):
-                return datetime.fromisoformat(replication_key_value)
-
-            return None
+            return state.get("replication_key_value")
 
         return CallbackPaginator(get_replication_key_value)
 
@@ -106,10 +101,8 @@ class AptemODataStream(RESTStream):
 
         if isinstance(next_page_token, int):
             params["$skip"] = next_page_token
-        elif isinstance(next_page_token, datetime):
-            params["$filter"] = (
-                f"{self.replication_key} gt {next_page_token.isoformat()}"
-            )
+        elif isinstance(next_page_token, str):
+            params["$filter"] = f"{self.replication_key} gt {next_page_token}"
 
         if selected_child_streams := [
             cs.name for cs in self.child_streams if cs.selected
