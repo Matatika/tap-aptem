@@ -143,6 +143,16 @@ class AptemODataStream(RESTStream):
             self.entity_name: hiddendict(record),
         }
 
+    @override
+    def _increment_stream_state(self, latest_record, *, context=None):
+        # avoid "New replication value is null" log pollution when attempting to
+        # increment state for records missing a replication value for streams with a
+        # defined replication key
+        if self.replication_key and not latest_record.get(self.replication_key):
+            return None
+
+        return super()._increment_stream_state(latest_record, context=context)
+
 
 class EmbeddedCollectionStream(Stream):
     """Embedded collection stream for inline related resources."""
