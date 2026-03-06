@@ -149,6 +149,13 @@ class AptemODataStream(RESTStream):
         # increment state for records missing a replication value for streams with a
         # defined replication key
         if self.replication_key and not latest_record.get(self.replication_key):
+            if not hasattr(self, "_has_null_replication_values"):
+                self.logger.warning("Stream has null replication values")
+
+                # doesn't actually matter what this value is; we just need to set the
+                # attribute
+                self._has_null_replication_values = True
+
             return None
 
         return super()._increment_stream_state(latest_record, context=context)
