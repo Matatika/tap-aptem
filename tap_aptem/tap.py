@@ -38,7 +38,7 @@ STREAM_REPLICATION_KEYS = {
     "OrganizationContacts": None,
     "Organizations": "UpdatedDate",
     "ReviewResponses": "Date",
-    "Reviews": "UpdatedDate",
+    "Reviews": None,
     "Tasks": "CreatedDate",
     "Trackers": "UpdatedDate",
     "Users": "UpdatedDate",
