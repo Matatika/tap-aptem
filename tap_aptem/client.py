@@ -77,7 +77,7 @@ class AptemODataStream(RESTStream):
 
     @override
     def get_new_paginator(self):
-        if not self.replication_key:
+        if self.replication_method == "FULL_TABLE" or not self.replication_key:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
         def get_replication_key_value(response: requests.Response):  # noqa: ARG001
