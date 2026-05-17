@@ -21,7 +21,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "defusedxml~=0.7.1",
-    "singer-sdk~=0.53.7",
+    "singer-sdk~=0.54.1",
     "requests~=2.34.2",
 ]
 
