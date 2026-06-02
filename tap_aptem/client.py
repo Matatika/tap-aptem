@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 ENTITY_RECORD_LIMITS = {
     "LearningPlanEvidences": 5000,
     "ReviewResponses": 5000,
-    "Users": 1000,
 }
 
 
