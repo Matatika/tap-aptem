@@ -9,7 +9,7 @@ import defusedxml.ElementTree
 from singer_sdk import typing as th
 
 if TYPE_CHECKING:
-    from xml.etree.ElementTree import Element, ElementTree
+    from xml.etree.ElementTree import Element
 
 EDM_TYPE_MAP = {
     "Edm.String": th.StringType,
@@ -33,7 +33,6 @@ EDM_TYPE_MAP = {
 
 @dataclass(frozen=True)
 class ComplexType:
-    name: str
     properties: dict[str, str]
     open_type: bool
 
@@ -48,15 +47,20 @@ class EntityInfo:
 
 @dataclass(frozen=True)
 class DiscoveredEntity:
-    name: str
     collection_name: str
-    parent_entity_name: str | None
+    parent_collection_name: str | None
     jsonschema: dict
     primary_keys: tuple[str, ...]
+    # maps each parent key as returned by the API to its namespaced primary key
+    parent_key_map: dict[str, str]
 
 
 def _local_name(tag: str):
     return tag.split("}", 1)[-1]
+
+
+def _unwrap_collection(prop_type: str):
+    return prop_type.removeprefix("Collection(").removesuffix(")")
 
 
 def _iter_children_by_name(element: Element, name: str):
@@ -65,7 +69,7 @@ def _iter_children_by_name(element: Element, name: str):
             yield child
 
 
-def _iter_schema_elements(root: ElementTree):
+def _iter_schema_elements(root: Element):
     for element in root.iter():
         if _local_name(element.tag) == "Schema":
             yield element, element.attrib["Namespace"]
@@ -78,16 +82,14 @@ def _extract_properties(type_element: Element, tag: str = "Property"):
     }
 
 
-def _extract_complex_types(root: ElementTree):
+def _extract_complex_types(root: Element):
     complex_types: dict[str, ComplexType] = {}
 
     for schema, namespace in _iter_schema_elements(root):
         for complex_type in _iter_children_by_name(schema, "ComplexType"):
-            name = complex_type.attrib["Name"]
-            type_id = f"{namespace}.{name}"
+            type_id = f"{namespace}.{complex_type.attrib['Name']}"
 
             complex_types[type_id] = ComplexType(
-                name,
                 _extract_properties(complex_type),
                 complex_type.attrib.get("OpenType") == "true",
             )
@@ -109,7 +111,7 @@ def _extract_entity_sets_by_type(root: Element):
     return entity_sets_by_type
 
 
-def _extract_entities_by_type(root: ElementTree):
+def _extract_entities_by_type(root: Element):
     entities_by_type: dict[str, EntityInfo] = {}
 
     for schema, namespace in _iter_schema_elements(root):
@@ -138,7 +140,7 @@ def _extract_entities_by_type(root: ElementTree):
 
 def _type_to_jsonschema(prop_type: str, complex_types: dict[str, ComplexType]):
     if prop_type.startswith("Collection("):
-        wrapped_type = prop_type.removeprefix("Collection(").removesuffix(")")
+        wrapped_type = _unwrap_collection(prop_type)
         return th.ArrayType(_type_to_jsonschema(wrapped_type, complex_types))
 
     if complex_type := complex_types.get(prop_type):
@@ -171,12 +173,15 @@ def discover_entities(xml: str):
         entity_collection_name: str,
         entity: EntityInfo,
         parent_entity: EntityInfo | None = None,
+        parent_collection_name: str | None = None,
     ):
         properties = entity.properties.copy()
         primary_keys = list(entity.keys)
+        parent_key_map: dict[str, str] = {}
 
         if parent_entity:
-            # apply parent key properties
+            # namespace parent key properties to avoid collisions with the embedded
+            # entity's own properties
             for key in parent_entity.keys:
                 parent_key = parent_entity.name + key
 
@@ -186,18 +191,21 @@ def discover_entities(xml: str):
                 )
 
                 primary_keys.append(parent_key)
+                parent_key_map[key] = parent_key
 
         jsonschema = th.PropertiesList(
             *_properties_to_jsonschema(properties, complex_types)
         ).to_dict()
 
         return DiscoveredEntity(
-            name=entity.name,
             collection_name=entity_collection_name,
-            parent_entity_name=parent_entity and parent_entity.name,
+            parent_collection_name=parent_collection_name,
             jsonschema=jsonschema,
             primary_keys=tuple(primary_keys),
+            parent_key_map=parent_key_map,
         )
+
+    entity_set_names = set(entity_sets_by_type.values())
 
     for entity_type_name, entity_collection_name in entity_sets_by_type.items():
         entity = entities_by_type[entity_type_name]
@@ -207,12 +215,10 @@ def discover_entities(xml: str):
             embedded_entity_collection_name,
             collection_type_name,
         ) in entity.navigation_properties.items():
-            embedded_entity_type_name = collection_type_name.removeprefix(
-                "Collection("
-            ).removesuffix(")")
+            embedded_entity_type_name = _unwrap_collection(collection_type_name)
 
             # do not shadow available entity sets
-            if embedded_entity_collection_name in entity_sets_by_type.values():
+            if embedded_entity_collection_name in entity_set_names:
                 continue
 
             embedded_entity = entities_by_type[embedded_entity_type_name]
@@ -221,4 +227,5 @@ def discover_entities(xml: str):
                 embedded_entity_collection_name,
                 embedded_entity,
                 entity,
+                entity_collection_name,
             )

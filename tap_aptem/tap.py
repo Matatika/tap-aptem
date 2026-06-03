@@ -80,34 +80,23 @@ class TapAptem(Tap):
         response = requests.get(url, timeout=300)
         response.raise_for_status()
 
-        streams_by_entity_name: dict[str,] = {}
-
         for entity in metadata.discover_entities(response.text):
-            if parent_stream := streams_by_entity_name.get(entity.parent_entity_name):
-                stream_cls = type(
-                    f"{entity.collection_name}EmbeddedStream",
-                    (EmbeddedCollectionStream,),
-                    {
-                        "parent_stream_type": type(parent_stream),
-                        "parent_entity_name": entity.parent_entity_name,
-                        "collection_name": entity.collection_name,
-                    },
-                )
+            if entity.parent_collection_name:
+                stream_cls = EmbeddedCollectionStream
+                path = f"/{entity.parent_collection_name}"
+                kwargs = {"parent_key_map": entity.parent_key_map}
 
             else:
-                stream_cls = type(
-                    f"{entity.name}AptemODataStream",
-                    (AptemODataStream,),
-                    {
-                        "entity_name": entity.name,
-                        "path": f"/{entity.collection_name}",
-                    },
-                )
+                stream_cls = AptemODataStream
+                path = f"/{entity.collection_name}"
+                kwargs = {}
 
             stream = stream_cls(
                 tap=self,
                 name=entity.collection_name,
                 schema=entity.jsonschema,
+                path=path,
+                **kwargs,
             )
 
             stream.primary_keys = entity.primary_keys
@@ -115,7 +104,7 @@ class TapAptem(Tap):
             try:
                 replication_key = STREAM_REPLICATION_KEYS[stream.name]
             except KeyError:
-                if isinstance(stream, AptemODataStream):
+                if type(stream) is AptemODataStream:
                     self.logger.warning(
                         "No replication key defined for %s",
                         stream.name,
@@ -125,9 +114,7 @@ class TapAptem(Tap):
 
             stream.replication_key = replication_key
 
-            streams_by_entity_name[entity.name] = stream
-
-        return streams_by_entity_name.values()
+            yield stream
 
 
 if __name__ == "__main__":
