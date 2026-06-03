@@ -80,8 +80,6 @@ class TapAptem(Tap):
         response = requests.get(url, timeout=300)
         response.raise_for_status()
 
-        streams_by_entity_name: dict[str, AptemODataStream] = {}
-
         for entity in metadata.discover_entities(response.text):
             if entity.parent_collection_name:
                 stream_cls = EmbeddedCollectionStream
@@ -116,9 +114,7 @@ class TapAptem(Tap):
 
             stream.replication_key = replication_key
 
-            streams_by_entity_name[entity.name] = stream
-
-        return streams_by_entity_name.values()
+            yield stream
 
 
 if __name__ == "__main__":

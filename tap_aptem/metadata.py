@@ -47,7 +47,6 @@ class EntityInfo:
 
 @dataclass(frozen=True)
 class DiscoveredEntity:
-    name: str
     collection_name: str
     parent_collection_name: str | None
     jsonschema: dict
@@ -195,7 +194,6 @@ def discover_entities(xml: str):
         ).to_dict()
 
         return DiscoveredEntity(
-            name=entity.name,
             collection_name=entity_collection_name,
             parent_collection_name=parent_collection_name,
             jsonschema=jsonschema,
