@@ -1,6 +1,6 @@
 [project]
 name = "tap-aptem"
-version = "0.0.1"
+version = "0.1.0"
 description = "Singer tap for Aptem, built with the Meltano Singer SDK."
 readme = "README.md"
 authors = [{ name = "Reuben Frankel", email = "rfrankel@matatika.com" }]
