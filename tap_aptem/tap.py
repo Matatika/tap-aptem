@@ -106,7 +106,7 @@ class TapAptem(Tap):
             try:
                 replication_key = STREAM_REPLICATION_KEYS[stream.name]
             except KeyError:
-                if isinstance(stream, AptemODataStream):
+                if type(stream) is AptemODataStream:
                     self.logger.warning(
                         "No replication key defined for %s",
                         stream.name,
