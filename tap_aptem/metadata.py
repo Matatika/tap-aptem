@@ -49,7 +49,7 @@ class EntityInfo:
 class DiscoveredEntity:
     name: str
     collection_name: str
-    parent_entity_name: str | None
+    parent_collection_name: str | None
     jsonschema: dict
     primary_keys: tuple[str, ...]
     # maps each parent key as returned by the API to its namespaced primary key
@@ -170,6 +170,7 @@ def discover_entities(xml: str):
         entity_collection_name: str,
         entity: EntityInfo,
         parent_entity: EntityInfo | None = None,
+        parent_collection_name: str | None = None,
     ):
         properties = entity.properties.copy()
         primary_keys = list(entity.keys)
@@ -196,7 +197,7 @@ def discover_entities(xml: str):
         return DiscoveredEntity(
             name=entity.name,
             collection_name=entity_collection_name,
-            parent_entity_name=parent_entity and parent_entity.name,
+            parent_collection_name=parent_collection_name,
             jsonschema=jsonschema,
             primary_keys=tuple(primary_keys),
             parent_key_map=parent_key_map,
@@ -224,4 +225,5 @@ def discover_entities(xml: str):
                 embedded_entity_collection_name,
                 embedded_entity,
                 entity,
+                entity_collection_name,
             )

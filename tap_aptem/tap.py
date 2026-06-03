@@ -83,9 +83,9 @@ class TapAptem(Tap):
         streams_by_entity_name: dict[str, AptemODataStream] = {}
 
         for entity in metadata.discover_entities(response.text):
-            if parent_stream := streams_by_entity_name.get(entity.parent_entity_name):
+            if entity.parent_collection_name:
                 stream_cls = EmbeddedCollectionStream
-                path = parent_stream.path
+                path = f"/{entity.parent_collection_name}"
                 kwargs = {"parent_key_map": entity.parent_key_map}
 
             else:
