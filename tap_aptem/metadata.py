@@ -9,7 +9,7 @@ import defusedxml.ElementTree
 from singer_sdk import typing as th
 
 if TYPE_CHECKING:
-    from xml.etree.ElementTree import Element, ElementTree
+    from xml.etree.ElementTree import Element
 
 EDM_TYPE_MAP = {
     "Edm.String": th.StringType,
@@ -69,7 +69,7 @@ def _iter_children_by_name(element: Element, name: str):
             yield child
 
 
-def _iter_schema_elements(root: ElementTree):
+def _iter_schema_elements(root: Element):
     for element in root.iter():
         if _local_name(element.tag) == "Schema":
             yield element, element.attrib["Namespace"]
@@ -82,7 +82,7 @@ def _extract_properties(type_element: Element, tag: str = "Property"):
     }
 
 
-def _extract_complex_types(root: ElementTree):
+def _extract_complex_types(root: Element):
     complex_types: dict[str, ComplexType] = {}
 
     for schema, namespace in _iter_schema_elements(root):
@@ -111,7 +111,7 @@ def _extract_entity_sets_by_type(root: Element):
     return entity_sets_by_type
 
 
-def _extract_entities_by_type(root: ElementTree):
+def _extract_entities_by_type(root: Element):
     entities_by_type: dict[str, EntityInfo] = {}
 
     for schema, namespace in _iter_schema_elements(root):
