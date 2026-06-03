@@ -84,24 +84,21 @@ class TapAptem(Tap):
 
         for entity in metadata.discover_entities(response.text):
             if parent_stream := streams_by_entity_name.get(entity.parent_entity_name):
-                stream_cls = type(
-                    f"{entity.collection_name}EmbeddedStream",
-                    (EmbeddedCollectionStream,),
-                    {
-                        "parent_entity_name": entity.parent_entity_name,
-                    },
-                )
+                stream_cls = EmbeddedCollectionStream
                 path = parent_stream.path
+                kwargs = {"parent_entity_name": entity.parent_entity_name}
 
             else:
                 stream_cls = AptemODataStream
                 path = f"/{entity.collection_name}"
+                kwargs = {}
 
             stream = stream_cls(
                 tap=self,
                 name=entity.collection_name,
                 schema=entity.jsonschema,
                 path=path,
+                **kwargs,
             )
 
             stream.primary_keys = entity.primary_keys

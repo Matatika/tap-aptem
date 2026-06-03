@@ -153,7 +153,10 @@ class AptemODataStream(RESTStream):
 class EmbeddedCollectionStream(AptemODataStream):
     """Embedded collection stream for inline related resources."""
 
-    parent_entity_name: str
+    @override
+    def __init__(self, /, parent_entity_name: str, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.parent_entity_name = parent_entity_name
 
     @override
     def get_url_params(self, context, next_page_token):
