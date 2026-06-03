@@ -59,6 +59,10 @@ def _local_name(tag: str):
     return tag.split("}", 1)[-1]
 
 
+def _unwrap_collection(prop_type: str):
+    return prop_type.removeprefix("Collection(").removesuffix(")")
+
+
 def _iter_children_by_name(element: Element, name: str):
     for child in element:
         if _local_name(child.tag) == name:
@@ -136,7 +140,7 @@ def _extract_entities_by_type(root: ElementTree):
 
 def _type_to_jsonschema(prop_type: str, complex_types: dict[str, ComplexType]):
     if prop_type.startswith("Collection("):
-        wrapped_type = prop_type.removeprefix("Collection(").removesuffix(")")
+        wrapped_type = _unwrap_collection(prop_type)
         return th.ArrayType(_type_to_jsonschema(wrapped_type, complex_types))
 
     if complex_type := complex_types.get(prop_type):
@@ -209,9 +213,7 @@ def discover_entities(xml: str):
             embedded_entity_collection_name,
             collection_type_name,
         ) in entity.navigation_properties.items():
-            embedded_entity_type_name = collection_type_name.removeprefix(
-                "Collection("
-            ).removesuffix(")")
+            embedded_entity_type_name = _unwrap_collection(collection_type_name)
 
             # do not shadow available entity sets
             if embedded_entity_collection_name in entity_sets_by_type.values():
