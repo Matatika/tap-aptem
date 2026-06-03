@@ -53,6 +53,8 @@ class DiscoveredEntity:
     parent_entity_name: str | None
     jsonschema: dict
     primary_keys: tuple[str, ...]
+    # maps each parent key as returned by the API to its namespaced primary key
+    parent_key_map: dict[str, str]
 
 
 def _local_name(tag: str):
@@ -174,9 +176,11 @@ def discover_entities(xml: str):
     ):
         properties = entity.properties.copy()
         primary_keys = list(entity.keys)
+        parent_key_map: dict[str, str] = {}
 
         if parent_entity:
-            # apply parent key properties
+            # namespace parent key properties to avoid collisions with the embedded
+            # entity's own properties
             for key in parent_entity.keys:
                 parent_key = parent_entity.name + key
 
@@ -186,6 +190,7 @@ def discover_entities(xml: str):
                 )
 
                 primary_keys.append(parent_key)
+                parent_key_map[key] = parent_key
 
         jsonschema = th.PropertiesList(
             *_properties_to_jsonschema(properties, complex_types)
@@ -197,6 +202,7 @@ def discover_entities(xml: str):
             parent_entity_name=parent_entity and parent_entity.name,
             jsonschema=jsonschema,
             primary_keys=tuple(primary_keys),
+            parent_key_map=parent_key_map,
         )
 
     for entity_type_name, entity_collection_name in entity_sets_by_type.items():

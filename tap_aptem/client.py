@@ -154,20 +154,16 @@ class EmbeddedCollectionStream(AptemODataStream):
     """Embedded collection stream for inline related resources."""
 
     @override
-    def __init__(self, /, parent_entity_name: str, *args, **kwargs) -> None:
+    def __init__(self, /, parent_key_map: dict[str, str], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.parent_entity_name = parent_entity_name
+        self.parent_key_map = parent_key_map
 
     @override
     def get_url_params(self, context, next_page_token):
         params = super().get_url_params(context, next_page_token)
 
-        # select only the parent entity primary keys
-        params["$select"] = ",".join(
-            pk.removeprefix(self.parent_entity_name)
-            for pk in self.primary_keys
-            if pk.startswith(self.parent_entity_name)
-        )
+        # select only the parent entity keys
+        params["$select"] = ",".join(self.parent_key_map)
 
         # expand the embedded collection
         params["$expand"] = self.name
@@ -178,9 +174,9 @@ class EmbeddedCollectionStream(AptemODataStream):
     def parse_response(self, response):
         for record in super().parse_response(response):
             for collection_properties in record.pop(self.name):
-                # prefix parent properties with the parent entity name
+                # namespace parent properties to match the discovered schema
                 parent_properties = {
-                    self.parent_entity_name + k: v for k, v in record.items()
+                    self.parent_key_map[k]: v for k, v in record.items()
                 }
 
                 yield parent_properties | collection_properties

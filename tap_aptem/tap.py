@@ -86,7 +86,7 @@ class TapAptem(Tap):
             if parent_stream := streams_by_entity_name.get(entity.parent_entity_name):
                 stream_cls = EmbeddedCollectionStream
                 path = parent_stream.path
-                kwargs = {"parent_entity_name": entity.parent_entity_name}
+                kwargs = {"parent_key_map": entity.parent_key_map}
 
             else:
                 stream_cls = AptemODataStream
