@@ -33,7 +33,6 @@ EDM_TYPE_MAP = {
 
 @dataclass(frozen=True)
 class ComplexType:
-    name: str
     properties: dict[str, str]
     open_type: bool
 
@@ -85,11 +84,9 @@ def _extract_complex_types(root: ElementTree):
 
     for schema, namespace in _iter_schema_elements(root):
         for complex_type in _iter_children_by_name(schema, "ComplexType"):
-            name = complex_type.attrib["Name"]
-            type_id = f"{namespace}.{name}"
+            type_id = f"{namespace}.{complex_type.attrib['Name']}"
 
             complex_types[type_id] = ComplexType(
-                name,
                 _extract_properties(complex_type),
                 complex_type.attrib.get("OpenType") == "true",
             )
