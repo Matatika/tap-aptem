@@ -8,10 +8,9 @@ from typing import TYPE_CHECKING
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.exceptions import RetriableAPIError
 from singer_sdk.pagination import BaseOffsetPaginator
-from singer_sdk.streams import RESTStream, Stream
+from singer_sdk.streams import RESTStream
 from typing_extensions import override
 
-from tap_aptem import hiddendict
 from tap_aptem.pagination import CallbackPaginator
 
 if TYPE_CHECKING:
@@ -41,8 +40,6 @@ class AptemODataStream(RESTStream):
     # >>> "2025-11-25T10:57:52.6880167Z" > "2025-11-25T10:57:52.68Z"
     # False
     check_sorted = False
-
-    entity_name: str
 
     @property
     def page_size(self):
@@ -104,11 +101,6 @@ class AptemODataStream(RESTStream):
         elif isinstance(next_page_token, str):
             params["$filter"] = f"{self.replication_key} gt {next_page_token}"
 
-        if selected_child_streams := [
-            cs.name for cs in self.child_streams if cs.selected
-        ]:
-            params["$expand"] = ",".join(selected_child_streams)
-
         selected_columns = [
             column_name
             for column_name in self.schema["properties"]
@@ -141,16 +133,6 @@ class AptemODataStream(RESTStream):
         super().validate_response(response)
 
     @override
-    def get_child_context(self, record, context):
-        if not self.child_streams:
-            return super().get_child_context(record, context)
-
-        return {
-            **{self.entity_name + pk: record[pk] for pk in self.primary_keys},
-            self.entity_name: hiddendict(record),
-        }
-
-    @override
     def _increment_stream_state(self, latest_record, *, context=None):
         # avoid "New replication value is null" log pollution when attempting to
         # increment state for records missing a replication value for streams with a
@@ -168,17 +150,34 @@ class AptemODataStream(RESTStream):
         return super()._increment_stream_state(latest_record, context=context)
 
 
-class EmbeddedCollectionStream(Stream):
+class EmbeddedCollectionStream(AptemODataStream):
     """Embedded collection stream for inline related resources."""
 
-    state_partitioning_keys = ()  # do not store any state bookmarks
-
     parent_entity_name: str
-    collection_name: str
 
     @override
-    def get_records(self, context):
-        base_record = {**context}
+    def get_url_params(self, context, next_page_token):
+        params = super().get_url_params(context, next_page_token)
 
-        for record in base_record.pop(self.parent_entity_name)[self.collection_name]:
-            yield base_record | record
+        # select only the parent entity primary keys
+        params["$select"] = ",".join(
+            pk.removeprefix(self.parent_entity_name)
+            for pk in self.primary_keys
+            if pk.startswith(self.parent_entity_name)
+        )
+
+        # expand the embedded collection
+        params["$expand"] = self.name
+
+        return params
+
+    @override
+    def parse_response(self, response):
+        for record in super().parse_response(response):
+            for collection_properties in record.pop(self.name):
+                # prefix parent properties with the parent entity name
+                parent_properties = {
+                    self.parent_entity_name + k: v for k, v in record.items()
+                }
+
+                yield parent_properties | collection_properties
