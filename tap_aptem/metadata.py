@@ -205,6 +205,8 @@ def discover_entities(xml: str):
             parent_key_map=parent_key_map,
         )
 
+    entity_set_names = set(entity_sets_by_type.values())
+
     for entity_type_name, entity_collection_name in entity_sets_by_type.items():
         entity = entities_by_type[entity_type_name]
         yield _discover_entity(entity_collection_name, entity)
@@ -216,7 +218,7 @@ def discover_entities(xml: str):
             embedded_entity_type_name = _unwrap_collection(collection_type_name)
 
             # do not shadow available entity sets
-            if embedded_entity_collection_name in entity_sets_by_type.values():
+            if embedded_entity_collection_name in entity_set_names:
                 continue
 
             embedded_entity = entities_by_type[embedded_entity_type_name]
