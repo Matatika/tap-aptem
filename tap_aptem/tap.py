@@ -31,6 +31,7 @@ STREAM_REPLICATION_KEYS = {
     "LearnerEmployment": "EmploymentStartDate",
     "LearningPlanComponents": "UpdatedDate",
     "LearningPlanEvidences": "SubmissionDate",
+    "LearningPlanEvidenceWithActivityData": "SubmissionDate",
     "MaximumProgrammeDataFields": None,
     "Messages": "CreatedDate",
     "Milestones": None,
