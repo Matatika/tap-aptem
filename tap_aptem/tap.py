@@ -24,6 +24,7 @@ STREAM_REPLICATION_KEYS = {
     "EPAErrors": "Date",
     "Episodes": "UpdatedDate",
     "Groups": "UpdatedDate",
+    "HoursRecords": None,
     "IlrAims": "UpdatedDate",
     "IlrLearner": "UpdatedDate",
     "Jobs": "UpdatedDate",
