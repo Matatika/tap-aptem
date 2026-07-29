@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import requests
 from singer_sdk import Tap
 from singer_sdk import typing as th
@@ -72,7 +74,22 @@ class TapAptem(Tap):
             th.DateTimeType,
             description="Start date for incremental replication.",
         ),
+        th.Property(
+            "endpoint_date_chunks",
+            th.StringType,
+            description=(
+                "JSON-encoded object mapping stream name to date-range chunk width "
+                "in days, e.g. '{\"LearningPlanEvidences\": 30}'. Streams not listed "
+                "use the default pagination behaviour unchanged."
+            ),
+        ),
     ).to_dict()
+
+    @property
+    def date_chunk_map(self) -> dict[str, int]:
+        """Parsed `endpoint_date_chunks` config, keyed by stream name."""
+        raw = self.config.get("endpoint_date_chunks")
+        return json.loads(raw) if raw else {}
 
     @override
     def discover_streams(self):
@@ -115,6 +132,7 @@ class TapAptem(Tap):
                 replication_key = None
 
             stream.replication_key = replication_key
+            stream.date_chunk_days = self.date_chunk_map.get(stream.name)
 
             yield stream
 

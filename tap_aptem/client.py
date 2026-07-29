@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
@@ -11,7 +12,7 @@ from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream
 from typing_extensions import override
 
-from tap_aptem.pagination import CallbackPaginator
+from tap_aptem.pagination import CallbackPaginator, DateChunkPaginator
 
 if TYPE_CHECKING:
     import requests
@@ -40,6 +41,9 @@ class AptemODataStream(RESTStream):
     # >>> "2025-11-25T10:57:52.6880167Z" > "2025-11-25T10:57:52.68Z"
     # False
     check_sorted = False
+
+    # set by the tap during discover_streams; only meaningful for incremental streams
+    date_chunk_days: int | None = None
 
     @property
     def page_size(self):
@@ -81,6 +85,15 @@ class AptemODataStream(RESTStream):
             state = self.get_context_state(self.context)
             return state.get("replication_key_value")
 
+        if self.date_chunk_days is not None:
+            starting_timestamp = self.get_starting_timestamp(self.context)
+            return DateChunkPaginator(
+                cursor=starting_timestamp.isoformat() if starting_timestamp else None,
+                chunk_days=self.date_chunk_days,
+                get_replication_key_value=get_replication_key_value,
+                now=datetime.datetime.now(datetime.timezone.utc),
+            )
+
         return CallbackPaginator(get_replication_key_value)
 
     @override
@@ -91,15 +104,25 @@ class AptemODataStream(RESTStream):
         if self.replication_key:
             params["$orderby"] = self.replication_key
 
-        if starting_timestamp := self.get_starting_timestamp(context):
-            params["$filter"] = (
-                f"{self.replication_key} ge {starting_timestamp.isoformat()}"
-            )
+        if self.date_chunk_days is not None:
+            if isinstance(next_page_token, str):
+                chunk_end = datetime.datetime.fromisoformat(
+                    next_page_token
+                ) + datetime.timedelta(days=self.date_chunk_days)
+                params["$filter"] = (
+                    f"{self.replication_key} ge {next_page_token} "
+                    f"and {self.replication_key} lt {chunk_end.isoformat()}"
+                )
+        else:
+            if starting_timestamp := self.get_starting_timestamp(context):
+                params["$filter"] = (
+                    f"{self.replication_key} ge {starting_timestamp.isoformat()}"
+                )
 
-        if isinstance(next_page_token, int):
-            params["$skip"] = next_page_token
-        elif isinstance(next_page_token, str):
-            params["$filter"] = f"{self.replication_key} gt {next_page_token}"
+            if isinstance(next_page_token, int):
+                params["$skip"] = next_page_token
+            elif isinstance(next_page_token, str):
+                params["$filter"] = f"{self.replication_key} gt {next_page_token}"
 
         selected_columns = [
             column_name
