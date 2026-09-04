@@ -78,6 +78,7 @@ class TapAptem(Tap):
         th.Property(
             "odata_version",
             th.StringType,
+            allowed_values=("1.0", "2.0"),
             default="1.0",
             description=(
                 "Aptem OData API version to discover and query, e.g. '1.0' "
@@ -91,7 +92,7 @@ class TapAptem(Tap):
     @override
     def discover_streams(self):
         tenant_name = self.config["tenant_name"]
-        odata_version = self.config.get("odata_version", "1.0")
+        odata_version = self.config["odata_version"]
         url = f"https://{tenant_name}.aptem.co.uk/odata/{odata_version}/$metadata"
 
         response = requests.get(url, timeout=300)

@@ -55,7 +55,7 @@ class AptemODataStream(RESTStream):
     @property
     def url_base(self):
         tenant_name = self.config["tenant_name"]
-        odata_version = self.config.get("odata_version", "1.0")
+        odata_version = self.config["odata_version"]
         return f"https://{tenant_name}.aptem.co.uk/odata/{odata_version}"
 
     @override
