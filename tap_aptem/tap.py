@@ -14,8 +14,10 @@ STREAM_REPLICATION_KEYS = {
     "AimWorkPlacements": "WorkPlaceStartDate",
     "ApprenticeshipFinancialRecords": "Date",
     "AptemCognitiveAssessments": "DateStart",
+    "Actions": "UpdatedDate",
     "AwardingBodyQualifications": "UpdatedDate",
     "AwardingBodyQualificationsAssessmentHistory": "Date",
+    "CheckpointAssessments": "LastModifiedDate",
     "ComplianceDocuments": "Date",
     "ComponentDueDateChanges": "ChangeDate",
     "CrmActivities": "UpdatedDate",
@@ -45,6 +47,7 @@ STREAM_REPLICATION_KEYS = {
     "Trackers": "UpdatedDate",
     "Users": "UpdatedDate",
     "UserGroups": None,
+    "VirtualAssistantExchanges": "Date",
     "WithdrawalReasons": "DateAdded",
 }
 
@@ -72,12 +75,24 @@ class TapAptem(Tap):
             th.DateTimeType,
             description="Start date for incremental replication.",
         ),
+        th.Property(
+            "odata_version",
+            th.StringType,
+            default="1.0",
+            description=(
+                "Aptem OData API version to discover and query, e.g. '1.0' "
+                "(the default) or '2.0'. Aptem publishes different entities on "
+                "different versions, so a tenant with data on both versions "
+                "needs one tap-aptem instance configured per version."
+            ),
+        ),
     ).to_dict()
 
     @override
     def discover_streams(self):
         tenant_name = self.config["tenant_name"]
-        url = f"https://{tenant_name}.aptem.co.uk/odata/1.0/$metadata"
+        odata_version = self.config.get("odata_version", "1.0")
+        url = f"https://{tenant_name}.aptem.co.uk/odata/{odata_version}/$metadata"
 
         response = requests.get(url, timeout=300)
         response.raise_for_status()
