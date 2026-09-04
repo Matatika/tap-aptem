@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 
 ENTITY_RECORD_LIMITS = {
+    "ActivityLog": 5000,
     "LearningPlanEvidences": 5000,
     "ReviewResponses": 5000,
 }
