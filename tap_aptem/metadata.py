@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Meltano.
+
 """OData $metadata parsing helpers."""
 
 from __future__ import annotations
@@ -33,12 +35,16 @@ EDM_TYPE_MAP = {
 
 @dataclass(frozen=True)
 class ComplexType:
+    """An OData complex type."""
+
     properties: dict[str, str]
     open_type: bool
 
 
 @dataclass(frozen=True)
 class EntityInfo:
+    """An OData entity type."""
+
     name: str
     properties: dict[str, str]
     navigation_properties: dict[str, str]
@@ -47,6 +53,8 @@ class EntityInfo:
 
 @dataclass(frozen=True)
 class DiscoveredEntity:
+    """An entity set and the stream that it becomes."""
+
     collection_name: str
     parent_collection_name: str | None
     jsonschema: dict
@@ -163,6 +171,14 @@ def _properties_to_jsonschema(
 
 
 def discover_entities(xml: str):
+    """Discover every entity set in an OData `$metadata` document.
+
+    Args:
+        xml: The `$metadata` document.
+
+    Returns:
+        A discovered entity for each entity set, including each nested one.
+    """
     root = defusedxml.ElementTree.fromstring(xml)
 
     complex_types = _extract_complex_types(root)
