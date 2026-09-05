@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Meltano.
+
 """OData $metadata parsing helpers."""
 
 from __future__ import annotations
