@@ -12,6 +12,9 @@ from typing_extensions import override
 from tap_aptem import metadata
 from tap_aptem.client import AptemODataStream, EmbeddedCollectionStream
 
+# ordered oldest first, so that a later version supersedes an earlier one
+ODATA_VERSIONS = ("1.0", "2.0")
+
 STREAM_REPLICATION_KEYS = {
     "AimWorkPlacements": "WorkPlaceStartDate",
     "ApprenticeshipFinancialRecords": "Date",
@@ -77,64 +80,55 @@ class TapAptem(Tap):
             th.DateTimeType,
             description="Start date for incremental replication.",
         ),
-        th.Property(
-            "odata_version",
-            th.StringType,
-            allowed_values=("1.0", "2.0"),
-            default="1.0",
-            description=(
-                "Aptem OData API version to discover and query, e.g. '1.0' "
-                "(the default) or '2.0'. Aptem publishes different entities on "
-                "different versions, so a tenant with data on both versions "
-                "needs one tap-aptem instance configured per version."
-            ),
-        ),
     ).to_dict()
 
     @override
     def discover_streams(self):
         tenant_name = self.config["tenant_name"]
-        odata_version = self.config["odata_version"]
-        url = f"https://{tenant_name}.aptem.co.uk/odata/{odata_version}/$metadata"
+        streams: dict[str, AptemODataStream] = {}
 
-        response = requests.get(url, timeout=300)
-        response.raise_for_status()
+        for odata_version in ODATA_VERSIONS:
+            url = f"https://{tenant_name}.aptem.co.uk/odata/{odata_version}/$metadata"
 
-        for entity in metadata.discover_entities(response.text):
-            if entity.parent_collection_name:
-                stream_cls = EmbeddedCollectionStream
-                path = f"/{entity.parent_collection_name}"
-                kwargs = {"parent_key_map": entity.parent_key_map}
+            response = requests.get(url, timeout=300)
+            response.raise_for_status()
 
-            else:
-                stream_cls = AptemODataStream
-                path = f"/{entity.collection_name}"
-                kwargs = {}
+            for entity in metadata.discover_entities(response.text):
+                if entity.parent_collection_name:
+                    stream_cls = EmbeddedCollectionStream
+                    path = f"/{odata_version}/{entity.parent_collection_name}"
+                    kwargs = {"parent_key_map": entity.parent_key_map}
 
-            stream = stream_cls(
-                tap=self,
-                name=entity.collection_name,
-                schema=entity.jsonschema,
-                path=path,
-                **kwargs,
-            )
+                else:
+                    stream_cls = AptemODataStream
+                    path = f"/{odata_version}/{entity.collection_name}"
+                    kwargs = {}
 
-            stream.primary_keys = entity.primary_keys
+                stream = stream_cls(
+                    tap=self,
+                    name=entity.collection_name,
+                    schema=entity.jsonschema,
+                    path=path,
+                    **kwargs,
+                )
 
-            try:
-                replication_key = STREAM_REPLICATION_KEYS[stream.name]
-            except KeyError:
-                if type(stream) is AptemODataStream:
-                    self.logger.warning(
-                        "No replication key defined for %s",
-                        stream.name,
-                    )
+                stream.primary_keys = entity.primary_keys
 
-                replication_key = None
+                try:
+                    replication_key = STREAM_REPLICATION_KEYS[stream.name]
+                except KeyError:
+                    if type(stream) is AptemODataStream:
+                        self.logger.warning(
+                            "No replication key defined for %s",
+                            stream.name,
+                        )
 
-            stream.replication_key = replication_key
+                    replication_key = None
 
-            yield stream
+                stream.replication_key = replication_key
+                streams[stream.name] = stream
+
+        return list(streams.values())
 
 
 if __name__ == "__main__":
