@@ -27,6 +27,13 @@ ENTITY_RECORD_LIMITS = {
     "ReviewResponses": 5000,
 }
 
+# streams updated so frequently during working hours that records are changed faster
+# than pages can be requested, so pagination never reaches an empty page - bound the
+# sync to records updated before the sync started (picked up by the next sync instead)
+BOUNDED_SYNC_STREAMS = {
+    "LearningPlanComponents",
+}
+
 
 class _ResumableAPIError(Exception):
     def __init__(self, message: str, response: requests.Response) -> None:
@@ -97,15 +104,25 @@ class AptemODataStream(RESTStream):
         if self.replication_key:
             params["$orderby"] = self.replication_key
 
-        if starting_timestamp := self.get_starting_timestamp(context):
-            params["$filter"] = (
+        if isinstance(next_page_token, int):
+            params["$skip"] = next_page_token
+
+        filters = []
+
+        if isinstance(next_page_token, str):
+            filters.append(f"{self.replication_key} gt {next_page_token}")
+        elif starting_timestamp := self.get_starting_timestamp(context):
+            filters.append(
                 f"{self.replication_key} ge {starting_timestamp.isoformat()}"
             )
 
-        if isinstance(next_page_token, int):
-            params["$skip"] = next_page_token
-        elif isinstance(next_page_token, str):
-            params["$filter"] = f"{self.replication_key} gt {next_page_token}"
+        if self.name in BOUNDED_SYNC_STREAMS and (
+            signpost := self.get_replication_key_signpost(context)
+        ):
+            filters.append(f"{self.replication_key} le {signpost.isoformat()}")
+
+        if filters:
+            params["$filter"] = " and ".join(filters)
 
         selected_columns = [
             column_name
