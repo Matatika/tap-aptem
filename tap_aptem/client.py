@@ -197,7 +197,6 @@ class AptemODataV2Stream(AptemODataStream):
 
     @override
     def get_new_paginator(self):
-        # OData v2 caps each page at 1,000 items, whatever `$top` asks for
         return ODataNextLinkPaginator()
 
     @override
