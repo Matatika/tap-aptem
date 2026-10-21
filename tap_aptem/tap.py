@@ -16,6 +16,11 @@ from tap_aptem.client import (
     EmbeddedCollectionStream,
 )
 
+ODATA_VERSION_STREAM_CLASSES = {
+    "1.0": AptemODataStream,
+    "2.0": AptemODataV2Stream,
+}
+
 STREAM_REPLICATION_KEYS = {
     "AimWorkPlacements": "WorkPlaceStartDate",
     "ApprenticeshipFinancialRecords": "Date",
@@ -111,9 +116,7 @@ class TapAptem(Tap):
                 kwargs = {"parent_key_map": entity.parent_key_map}
 
             else:
-                stream_cls = (
-                    AptemODataV2Stream if odata_version == "2.0" else AptemODataStream
-                )
+                stream_cls = ODATA_VERSION_STREAM_CLASSES[odata_version]
                 path = f"/{entity.collection_name}"
                 kwargs = {}
 
