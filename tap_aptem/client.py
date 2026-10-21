@@ -168,9 +168,9 @@ class AptemODataStream(RESTStream):
             if (
                 isinstance(exception, RetriableAPIError)
                 and exception.response.status_code == HTTPStatus.TOO_MANY_REQUESTS
-                and "Retry-After" in exception.response.headers
+                and (retry_after := exception.response.headers.get("Retry-After"))
             ):
-                exception = yield float(exception.response.headers["Retry-After"])
+                exception = yield float(retry_after)
             else:
                 exception = yield next(default_wait_gen)
 
