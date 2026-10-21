@@ -156,6 +156,25 @@ class AptemODataStream(RESTStream):
         super().validate_response(response)
 
     @override
+    def backoff_wait_generator(self):
+        default_wait_gen = super().backoff_wait_generator()
+
+        # backoff primes only the generator that it calls, so prime the default here
+        next(default_wait_gen)
+
+        exception = yield
+
+        while True:
+            if (
+                isinstance(exception, RetriableAPIError)
+                and exception.response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+                and (retry_after := exception.response.headers.get("Retry-After"))
+            ):
+                exception = yield float(retry_after)
+            else:
+                exception = yield next(default_wait_gen)
+
+    @override
     def _increment_stream_state(self, latest_record, *, context=None):
         # avoid "New replication value is null" log pollution when attempting to
         # increment state for records missing a replication value for streams with a
