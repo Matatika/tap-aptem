@@ -14,6 +14,7 @@ from tap_aptem.client import (
     AptemODataStream,
     AptemODataV2Stream,
     EmbeddedCollectionStream,
+    ReviewsStream,
 )
 
 ODATA_VERSION_STREAM_CLASSES = {
@@ -53,7 +54,7 @@ STREAM_REPLICATION_KEYS = {
     "OrganizationContacts": None,
     "Organizations": "UpdatedDate",
     "ReviewResponses": "UpdatedDate",
-    "Reviews": None,
+    "Reviews": "UpdatedDate",
     "Tasks": "UpdatedDate",
     "Trackers": "UpdatedDate",
     "Users": "UpdatedDate",
@@ -116,7 +117,11 @@ class TapAptem(Tap):
                 kwargs = {"parent_key_map": entity.parent_key_map}
 
             else:
-                stream_cls = ODATA_VERSION_STREAM_CLASSES[odata_version]
+                stream_cls = (
+                    ReviewsStream
+                    if entity.collection_name == "Reviews"
+                    else ODATA_VERSION_STREAM_CLASSES[odata_version]
+                )
                 path = f"/{entity.collection_name}"
                 kwargs = {}
 

@@ -81,6 +81,10 @@ class AptemODataStream(RESTStream):
 
     @override
     def get_records(self, context):
+        # the SDK sets the context once for the sync, but the paginator must read the
+        # bookmark of the partition that it pages
+        self.context = context
+
         try:
             yield from super().get_records(context)
         except _ResumableAPIError as e:
@@ -195,6 +199,51 @@ class AptemODataStream(RESTStream):
             return None
 
         return super()._increment_stream_state(latest_record, context=context)
+
+
+class ReviewsStream(AptemODataStream):
+    """Aptem Reviews stream.
+
+    Aptem leaves `UpdatedDate` null until a review is first updated. Sync the reviews
+    that nobody has updated in a partition of their own, filtered and ordered on
+    `CreatedDate`, and give each of them its `CreatedDate` as its `UpdatedDate`.
+    """
+
+    @override
+    @property
+    def partitions(self):
+        return [{"updated": True}, {"updated": False}]
+
+    @override
+    def get_url_params(self, context, next_page_token):
+        params = super().get_url_params(context, next_page_token)
+
+        if context["updated"]:
+            filters = ["UpdatedDate ne null"]
+
+            if "$filter" in params:
+                filters.append(params["$filter"])
+
+        else:
+            params["$orderby"] = "CreatedDate"
+            filters = ["UpdatedDate eq null"]
+
+            if isinstance(next_page_token, str):
+                filters.append(f"CreatedDate gt {next_page_token}")
+            elif starting_timestamp := self.get_starting_timestamp(context):
+                filters.append(f"CreatedDate ge {starting_timestamp.isoformat()}")
+
+            if "CreatedDate" not in params["$select"].split(","):
+                params["$select"] += ",CreatedDate"
+
+        params["$filter"] = " and ".join(filters)
+
+        return params
+
+    @override
+    def post_process(self, row, context=None):
+        row["UpdatedDate"] = row["UpdatedDate"] or row["CreatedDate"]
+        return row
 
 
 class AptemODataV2Stream(AptemODataStream):
