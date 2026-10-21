@@ -13,13 +13,13 @@ from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream
 from typing_extensions import override
 
-from tap_aptem.pagination import CallbackPaginator
+from tap_aptem.pagination import CallbackPaginator, ODataNextLinkPaginator
 
 if TYPE_CHECKING:
     import requests
 
 
-ENTITY_RECORD_LIMITS = {
+V1_ENTITY_RECORD_LIMITS = {
     "ActivityLog": 5000,
     "LearnerEmployment": 5000,
     "LearningPlanEvidences": 5000,
@@ -56,7 +56,7 @@ class AptemODataStream(RESTStream):
     @property
     def page_size(self):
         """Number of entity records to request at a time."""
-        return ENTITY_RECORD_LIMITS.get(self.name, 10000)
+        return V1_ENTITY_RECORD_LIMITS.get(self.name, 10000)
 
     @override
     @property
@@ -190,6 +190,36 @@ class AptemODataStream(RESTStream):
             return None
 
         return super()._increment_stream_state(latest_record, context=context)
+
+
+class AptemODataV2Stream(AptemODataStream):
+    """Aptem OData v2 stream class."""
+
+    @override
+    def get_new_paginator(self):
+        return ODataNextLinkPaginator()
+
+    @override
+    def get_url_params(self, context, next_page_token):
+        # a next link already carries the query of the first request
+        if next_page_token:
+            return {}
+
+        params = super().get_url_params(context, next_page_token)
+
+        # OData v2 applies `$top` to the whole result set, not to one page
+        del params["$top"]
+
+        return params
+
+    @override
+    def get_http_request(self, *, page):
+        request = super().get_http_request(page=page)
+
+        if page.next_page_token:
+            request.url = page.next_page_token.geturl()
+
+        return request
 
 
 class EmbeddedCollectionStream(AptemODataStream):
