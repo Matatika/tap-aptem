@@ -56,7 +56,7 @@ class AptemODataStream(RESTStream):
     @property
     def page_size(self):
         """Number of entity records to request at a time."""
-        return ENTITY_RECORD_LIMITS.get(self.name, 100_000)
+        return ENTITY_RECORD_LIMITS.get(self.name, 10000)
 
     @override
     @property
