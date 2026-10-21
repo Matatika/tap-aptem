@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from http import HTTPStatus
 from typing import TYPE_CHECKING
+from urllib.parse import ParseResult
 
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.exceptions import RetriableAPIError
@@ -13,7 +14,7 @@ from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream
 from typing_extensions import override
 
-from tap_aptem.pagination import CallbackPaginator
+from tap_aptem.pagination import CallbackPaginator, ODataNextLinkPaginator
 
 if TYPE_CHECKING:
     import requests
@@ -171,6 +172,37 @@ class AptemODataStream(RESTStream):
             return None
 
         return super()._increment_stream_state(latest_record, context=context)
+
+
+class AptemODataV2Stream(AptemODataStream):
+    """Aptem OData v2 stream class."""
+
+    @override
+    def get_new_paginator(self):
+        # OData v2 caps each page at 1,000 items, whatever `$top` asks for
+        if self.replication_method == "FULL_TABLE" or not self.replication_key:
+            return ODataNextLinkPaginator()
+
+        return super().get_new_paginator()
+
+    @override
+    def get_url_params(self, context, next_page_token):
+        params = super().get_url_params(context, next_page_token)
+
+        # OData v2 applies `$top` to the whole result set, not to one page
+        del params["$top"]
+
+        return params
+
+    @override
+    def get_http_request(self, *, page):
+        request = super().get_http_request(page=page)
+
+        if isinstance(page.next_page_token, ParseResult):
+            request.url = page.next_page_token.geturl()
+            request.params = {}
+
+        return request
 
 
 class EmbeddedCollectionStream(AptemODataStream):

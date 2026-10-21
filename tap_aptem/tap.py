@@ -10,7 +10,11 @@ from singer_sdk import typing as th
 from typing_extensions import override
 
 from tap_aptem import metadata
-from tap_aptem.client import AptemODataStream, EmbeddedCollectionStream
+from tap_aptem.client import (
+    AptemODataStream,
+    AptemODataV2Stream,
+    EmbeddedCollectionStream,
+)
 
 STREAM_REPLICATION_KEYS = {
     "AimWorkPlacements": "WorkPlaceStartDate",
@@ -107,7 +111,9 @@ class TapAptem(Tap):
                 kwargs = {"parent_key_map": entity.parent_key_map}
 
             else:
-                stream_cls = AptemODataStream
+                stream_cls = (
+                    AptemODataV2Stream if odata_version == "2.0" else AptemODataStream
+                )
                 path = f"/{entity.collection_name}"
                 kwargs = {}
 
@@ -124,7 +130,7 @@ class TapAptem(Tap):
             try:
                 replication_key = STREAM_REPLICATION_KEYS[stream.name]
             except KeyError:
-                if type(stream) is AptemODataStream:
+                if not isinstance(stream, EmbeddedCollectionStream):
                     self.logger.warning(
                         "No replication key defined for %s",
                         stream.name,
