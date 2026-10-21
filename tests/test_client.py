@@ -96,8 +96,15 @@ class ODataV2Adapter(BaseAdapter):
         pass
 
 
-def test_odata_v2_full_table_sync_gets_every_record():
-    """Follow `@odata.nextLink` on OData v2, rather than skip by the page size."""
+@pytest.mark.parametrize(
+    "replication_key",
+    [
+        pytest.param(None, id="full table"),
+        pytest.param("Id", id="incremental"),
+    ],
+)
+def test_odata_v2_sync_gets_every_record(replication_key):
+    """Follow `@odata.nextLink` on OData v2, rather than page by the tap's own query."""
     tap = TapAptem(
         config={"tenant_name": "tenant", "api_token": "token", "odata_version": "2.0"},
         setup_mapper=False,
@@ -108,6 +115,7 @@ def test_odata_v2_full_table_sync_gets_every_record():
         schema={"properties": {"Id": {"type": "integer"}}},
         path="/Actions",
     )
+    stream.replication_key = replication_key
     stream.requests_session.mount("https://", ODataV2Adapter())
 
     ids = [record["Id"] for record in stream.get_records(context=None)]
