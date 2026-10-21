@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     import requests
 
 
-ENTITY_RECORD_LIMITS = {
+V1_ENTITY_RECORD_LIMITS = {
     "ActivityLog": 5000,
     "LearnerEmployment": 5000,
     "LearningPlanEvidences": 5000,
@@ -56,7 +56,7 @@ class AptemODataStream(RESTStream):
     @property
     def page_size(self):
         """Number of entity records to request at a time."""
-        return ENTITY_RECORD_LIMITS.get(self.name, 10000)
+        return V1_ENTITY_RECORD_LIMITS.get(self.name, 10000)
 
     @override
     @property
