@@ -48,13 +48,13 @@ def _retriable_api_error(status_code: int, headers: dict[str, str]):
         pytest.param(
             HTTPStatus.TOO_MANY_REQUESTS,
             {},
-            [2, 4],
+            [10, 20],
             id="rate limited without Retry-After",
         ),
         pytest.param(
             HTTPStatus.SERVICE_UNAVAILABLE,
             {"Retry-After": "30"},
-            [2, 4],
+            [10, 20],
             id="server error",
         ),
     ],

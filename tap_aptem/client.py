@@ -7,6 +7,7 @@ from __future__ import annotations
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
+import backoff
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.exceptions import RetriableAPIError
 from singer_sdk.pagination import BaseOffsetPaginator
@@ -157,7 +158,7 @@ class AptemODataStream(RESTStream):
 
     @override
     def backoff_wait_generator(self):
-        default_wait_gen = super().backoff_wait_generator()
+        default_wait_gen = backoff.expo(factor=10)
 
         # backoff primes only the generator that it calls, so prime the default here
         next(default_wait_gen)
@@ -173,6 +174,10 @@ class AptemODataStream(RESTStream):
                 exception = yield float(retry_after)
             else:
                 exception = yield next(default_wait_gen)
+
+    @override
+    def backoff_max_tries(self):
+        return 4
 
     @override
     def _increment_stream_state(self, latest_record, *, context=None):
