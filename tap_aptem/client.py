@@ -54,6 +54,11 @@ class AptemODataStream(RESTStream):
     # False
     check_sorted = False
 
+    # keys besides the replication key that also show a change to a record - sync the
+    # records that changed on any key, as a record can change on one key but not on
+    # another
+    additional_replication_keys: tuple[str, ...] = ()
+
     @property
     def page_size(self):
         """Number of entity records to request at a time."""
@@ -62,7 +67,7 @@ class AptemODataStream(RESTStream):
     @override
     @property
     def is_sorted(self):
-        return bool(self.replication_key)
+        return bool(self.replication_key) and not self.additional_replication_keys
 
     @override
     @property
@@ -88,7 +93,7 @@ class AptemODataStream(RESTStream):
 
     @override
     def get_new_paginator(self):
-        if self.replication_method == "FULL_TABLE" or not self.replication_key:
+        if self.replication_method == "FULL_TABLE" or not self.is_sorted:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
         def get_replication_key_value(response: requests.Response):  # noqa: ARG001
@@ -102,7 +107,10 @@ class AptemODataStream(RESTStream):
         params = super().get_url_params(context, next_page_token)
         params["$top"] = self.page_size
 
-        if self.replication_key:
+        if self.additional_replication_keys:
+            # a record keeps its place in the order when it changes during the sync
+            params["$orderby"] = ",".join(self.primary_keys)
+        elif self.replication_key:
             params["$orderby"] = self.replication_key
 
         if isinstance(next_page_token, int):
@@ -113,9 +121,11 @@ class AptemODataStream(RESTStream):
         if isinstance(next_page_token, str):
             filters.append(f"{self.replication_key} gt {next_page_token}")
         elif starting_timestamp := self.get_starting_timestamp(context):
-            filters.append(
-                f"{self.replication_key} ge {starting_timestamp.isoformat()}"
+            key_filters = (
+                f"{key} ge {starting_timestamp.isoformat()}"
+                for key in (self.replication_key, *self.additional_replication_keys)
             )
+            filters.append(f"({' or '.join(key_filters)})")
 
         if self.name in BOUNDED_SYNC_STREAMS and (
             signpost := self.get_replication_key_signpost(context)

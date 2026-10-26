@@ -53,7 +53,8 @@ STREAM_REPLICATION_KEYS = {
     "OrganizationContacts": None,
     "Organizations": "UpdatedDate",
     "ReviewResponses": "UpdatedDate",
-    "Reviews": None,
+    # Aptem leaves `UpdatedDate` null until a review is first updated
+    "Reviews": ("UpdatedDate", "CreatedDate"),
     "Tasks": "UpdatedDate",
     "Trackers": "UpdatedDate",
     "Users": "UpdatedDate",
@@ -140,6 +141,10 @@ class TapAptem(Tap):
                     )
 
                 replication_key = None
+
+            if isinstance(replication_key, tuple):
+                replication_key, *additional_keys = replication_key
+                stream.additional_replication_keys = tuple(additional_keys)
 
             stream.replication_key = replication_key
 

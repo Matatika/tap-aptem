@@ -12,6 +12,7 @@ import requests
 from requests.adapters import BaseAdapter
 from singer_sdk.exceptions import RetriableAPIError
 
+from tap_aptem import client
 from tap_aptem.client import AptemODataStream, AptemODataV2Stream
 from tap_aptem.tap import TapAptem
 
@@ -121,3 +122,108 @@ def test_odata_v2_sync_gets_every_record(replication_key):
     ids = [record["Id"] for record in stream.get_records(context=None)]
 
     assert ids == list(range(RECORD_COUNT))  # noqa: S101
+
+
+def _matches(review, condition):
+    return any(
+        review[field] is not None and review[field] >= value
+        for field, _, value in (
+            key_filter.split(" ") for key_filter in condition.strip("()").split(" or ")
+        )
+    )
+
+
+class ReviewsAdapter(BaseAdapter):
+    """Serve reviews with the OData filter, order, and page of each request."""
+
+    def __init__(self, reviews) -> None:
+        """Serve these reviews."""
+        super().__init__()
+        self.reviews = reviews
+
+    def send(self, request, **kwargs):  # noqa: ARG002, D102
+        query = {k: v[0] for k, v in parse_qs(urlparse(request.url).query).items()}
+        skip = int(query.get("$skip", 0))
+
+        reviews = sorted(
+            (
+                review
+                for review in self.reviews
+                if "$filter" not in query or _matches(review, query["$filter"])
+            ),
+            key=lambda review: review[query["$orderby"]],
+        )
+
+        body = {"value": reviews[skip : skip + int(query["$top"])]}
+
+        response = requests.Response()
+        response.status_code = 200
+        response.raw = io.BytesIO(json.dumps(body).encode())
+        response.request = request
+        return response
+
+    def close(self):  # noqa: D102
+        pass
+
+
+def _review(review_id, created_day, updated_day=None):
+    return {
+        "Id": review_id,
+        "CreatedDate": f"2026-01-{created_day:02}T00:00:00+00:00",
+        "UpdatedDate": updated_day and f"2026-01-{updated_day:02}T00:00:00+00:00",
+    }
+
+
+def _sync(tap, capsys):
+    tap.sync_all()
+
+    messages = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    return [message["record"] for message in messages if message["type"] == "RECORD"]
+
+
+def test_reviews_sync_incrementally(monkeypatch, capsys):
+    """Sync a review that changed on either its `UpdatedDate` or its `CreatedDate`."""
+    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Reviews", 2)
+
+    reviews = [
+        _review(1, created_day=1, updated_day=4),
+        _review(2, created_day=2),
+        _review(3, created_day=3, updated_day=5),
+        _review(4, created_day=4),
+        _review(5, created_day=5),
+    ]
+
+    def discover_streams(tap):
+        datetime_type = {"type": ["string", "null"], "format": "date-time"}
+        stream = AptemODataStream(
+            tap,
+            name="Reviews",
+            schema={
+                "properties": {
+                    "Id": {"type": "integer"},
+                    "CreatedDate": datetime_type,
+                    "UpdatedDate": datetime_type,
+                },
+            },
+            path="/Reviews",
+        )
+        stream.primary_keys = ("Id",)
+        stream.replication_key = "UpdatedDate"
+        stream.additional_replication_keys = ("CreatedDate",)
+        stream.requests_session.mount("https://", ReviewsAdapter(reviews))
+        return [stream]
+
+    monkeypatch.setattr(TapAptem, "discover_streams", discover_streams)
+    tap = TapAptem(config={"tenant_name": "tenant", "api_token": "token"})
+
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == [1, 2, 3, 4, 5]  # noqa: S101
+
+    reviews[1] = _review(2, created_day=2, updated_day=6)
+    reviews.append(_review(6, created_day=7))
+
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == [2, 3, 5, 6]  # noqa: S101
