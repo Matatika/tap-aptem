@@ -32,3 +32,20 @@ class ODataNextLinkPaginator(BaseHATEOASPaginator):
     @override
     def get_next_url(self, response):
         return response.json().get("@odata.nextLink")
+
+
+class LastRecordPaginator(BaseAPIPaginator):
+    """Paginator class that returns the last record of each OData page."""
+
+    def __init__(self) -> None:
+        """Create a paginator that starts with no record."""
+        super().__init__(None)
+
+    @override
+    def continue_if_empty(self, response):
+        # a page of parent records can expand to no embedded records
+        return bool(response.json()["value"])
+
+    @override
+    def get_next(self, response):
+        return response.json()["value"][-1]

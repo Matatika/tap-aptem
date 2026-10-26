@@ -12,7 +12,11 @@ import requests
 from requests.adapters import BaseAdapter
 from singer_sdk.exceptions import RetriableAPIError
 
-from tap_aptem.client import AptemODataStream, AptemODataV2Stream
+from tap_aptem.client import (
+    AptemODataStream,
+    AptemODataV2Stream,
+    EmbeddedCollectionStream,
+)
 from tap_aptem.tap import TapAptem
 
 RECORD_COUNT = 10_500
@@ -121,3 +125,116 @@ def test_odata_v2_sync_gets_every_record(replication_key):
     ids = [record["Id"] for record in stream.get_records(context=None)]
 
     assert ids == list(range(RECORD_COUNT))  # noqa: S101
+
+
+class ODataV1Adapter(BaseAdapter):
+    """Serve records by the `$filter`, `$orderby` and `$top` of each request.
+
+    Aptem times out on a deep `$skip`, so refuse any `$skip`.
+    """
+
+    def __init__(self, records) -> None:  # noqa: D107
+        super().__init__()
+        self.records = records
+
+    def send(self, request, **kwargs):  # noqa: ARG002, D102
+        query = {k: v[0] for k, v in parse_qs(urlparse(request.url).query).items()}
+        response = requests.Response()
+        response.request = request
+
+        if "$skip" in query:
+            response.status_code = HTTPStatus.BAD_REQUEST
+            body = {"error": {"message": "$skip is not supported"}}
+        else:
+            records = self.records
+
+            if "$filter" in query:
+                condition = (
+                    query["$filter"].replace(" eq ", " == ").replace(" gt ", " > ")
+                )
+                records = [r for r in records if eval(condition, {}, r)]  # noqa: S307
+
+            if "$orderby" in query:
+                keys = query["$orderby"].split(",")
+                records = sorted(records, key=lambda r: [r[k] for k in keys])
+
+            response.status_code = HTTPStatus.OK
+            body = {"value": records[: int(query["$top"])]}
+
+        response.raw = io.BytesIO(json.dumps(body).encode())
+        return response
+
+    def close(self):  # noqa: D102
+        pass
+
+
+@pytest.mark.parametrize(
+    ("primary_keys", "records"),
+    [
+        pytest.param(
+            ["Id"],
+            [{"Id": i} for i in range(RECORD_COUNT)],
+            id="single key",
+        ),
+        pytest.param(
+            ["LearnerId", "Order"],
+            [{"LearnerId": i // 3, "Order": i % 3} for i in range(RECORD_COUNT)],
+            id="composite key",
+        ),
+        pytest.param(
+            ["LearnerId", "Step"],
+            [
+                {"LearnerId": i // 3, "Step": f"Step {i % 3}"}
+                for i in range(RECORD_COUNT)
+            ],
+            id="composite string key",
+        ),
+    ],
+)
+def test_full_table_sync_gets_every_record(primary_keys, records):
+    """Page on the primary keys, which Aptem serves fast at any depth."""
+    tap = TapAptem(
+        config={"tenant_name": "tenant", "api_token": "token"},
+        setup_mapper=False,
+    )
+    stream = AptemODataStream(
+        tap,
+        name="Reviews",
+        schema={"properties": {key: {} for key in primary_keys}},
+        path="/Reviews",
+    )
+    stream.primary_keys = primary_keys
+    stream.requests_session.mount("https://", ODataV1Adapter(records[::-1]))
+
+    assert list(stream.get_records(context=None)) == records  # noqa: S101
+
+
+def test_embedded_collection_sync_gets_every_record():
+    """Page on the parent keys, past a page of parents with no embedded records."""
+    parents = [
+        {
+            "Id": i,
+            "UserTrackers_Trackers": [] if i in range(10_000, 20_000) else [{"Id": i}],
+        }
+        for i in range(20_010)
+    ]
+
+    tap = TapAptem(
+        config={"tenant_name": "tenant", "api_token": "token"},
+        setup_mapper=False,
+    )
+    stream = EmbeddedCollectionStream(
+        tap=tap,
+        name="UserTrackers_Trackers",
+        schema={"properties": {"Id": {}, "UserId": {}}},
+        path="/Users",
+        parent_key_map={"Id": "UserId"},
+    )
+    stream.primary_keys = ["Id", "UserId"]
+    stream.requests_session.mount("https://", ODataV1Adapter(parents[::-1]))
+
+    assert list(stream.get_records(context=None)) == [  # noqa: S101
+        {"UserId": parent["Id"]} | tracker
+        for parent in parents
+        for tracker in parent["UserTrackers_Trackers"]
+    ]

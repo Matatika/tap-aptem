@@ -10,11 +10,14 @@ from typing import TYPE_CHECKING
 import backoff
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.exceptions import RetriableAPIError
-from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream
 from typing_extensions import override
 
-from tap_aptem.pagination import CallbackPaginator, ODataNextLinkPaginator
+from tap_aptem.pagination import (
+    CallbackPaginator,
+    LastRecordPaginator,
+    ODataNextLinkPaginator,
+)
 
 if TYPE_CHECKING:
     import requests
@@ -34,6 +37,13 @@ V1_ENTITY_RECORD_LIMITS = {
 BOUNDED_SYNC_STREAMS = {
     "LearningPlanComponents",
 }
+
+
+def _odata_literal(value):
+    if isinstance(value, str):
+        return "'{}'".format(value.replace("'", "''"))
+
+    return str(value)
 
 
 class _ResumableAPIError(Exception):
@@ -58,6 +68,11 @@ class AptemODataStream(RESTStream):
     def page_size(self):
         """Number of entity records to request at a time."""
         return V1_ENTITY_RECORD_LIMITS.get(self.name, 10000)
+
+    @property
+    def page_keys(self):
+        """Keys that order a sync that is not sorted on its replication key."""
+        return self.primary_keys
 
     @override
     @property
@@ -89,7 +104,7 @@ class AptemODataStream(RESTStream):
     @override
     def get_new_paginator(self):
         if self.replication_method == "FULL_TABLE" or not self.replication_key:
-            return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
+            return LastRecordPaginator()
 
         def get_replication_key_value(response: requests.Response):  # noqa: ARG001
             state = self.get_context_state(self.context)
@@ -102,13 +117,28 @@ class AptemODataStream(RESTStream):
         params = super().get_url_params(context, next_page_token)
         params["$top"] = self.page_size
 
-        if self.replication_key:
+        # Aptem serves a deep `$skip` too slowly, so page after the last record instead
+        if self.replication_method == "FULL_TABLE" or not self.replication_key:
+            params["$orderby"] = ",".join(self.page_keys)
+        else:
             params["$orderby"] = self.replication_key
 
-        if isinstance(next_page_token, int):
-            params["$skip"] = next_page_token
-
         filters = []
+
+        if isinstance(next_page_token, dict):
+            keyset_filters = [
+                " and ".join(
+                    [
+                        *(
+                            f"{k} eq {_odata_literal(next_page_token[k])}"
+                            for k in self.page_keys[:i]
+                        ),
+                        f"{key} gt {_odata_literal(next_page_token[key])}",
+                    ]
+                )
+                for i, key in enumerate(self.page_keys)
+            ]
+            filters.append(f"({' or '.join(keyset_filters)})")
 
         if isinstance(next_page_token, str):
             filters.append(f"{self.replication_key} gt {next_page_token}")
@@ -234,6 +264,12 @@ class EmbeddedCollectionStream(AptemODataStream):
     def __init__(self, /, parent_key_map: dict[str, str], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.parent_key_map = parent_key_map
+
+    @override
+    @property
+    def page_keys(self):
+        # page the parent collection, by the parent keys as returned by the API
+        return list(self.parent_key_map)
 
     @override
     def get_url_params(self, context, next_page_token):
