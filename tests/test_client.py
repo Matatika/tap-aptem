@@ -124,12 +124,20 @@ def test_odata_v2_sync_gets_every_record(replication_key):
     assert ids == list(range(RECORD_COUNT))  # noqa: S101
 
 
+def _holds(review, field, value):
+    if value == "null":
+        return review[field] is None
+
+    return review[field] is not None and review[field] >= value
+
+
 def _matches(review, condition):
     return any(
-        review[field] is not None and review[field] >= value
-        for field, _, value in (
-            key_filter.split(" ") for key_filter in condition.strip("()").split(" or ")
+        all(
+            _holds(review, field, value)
+            for field, _, value in (term.split(" ") for term in group.split(" and "))
         )
+        for group in condition.strip("()").split(" or ")
     )
 
 
@@ -183,7 +191,7 @@ def _sync(tap, capsys):
 
 
 def test_reviews_sync_incrementally(monkeypatch, capsys):
-    """Sync a review that changed on either its `UpdatedDate` or its `CreatedDate`."""
+    """Sync a review on its `UpdatedDate`, or its `CreatedDate` where that is null."""
     monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Reviews", 2)
 
     reviews = [
@@ -223,6 +231,7 @@ def test_reviews_sync_incrementally(monkeypatch, capsys):
 
     reviews[1] = _review(2, created_day=2, updated_day=6)
     reviews.append(_review(6, created_day=7))
+    reviews.append(_review(7, created_day=7, updated_day=1))
 
     records = _sync(tap, capsys)
 

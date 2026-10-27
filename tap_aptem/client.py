@@ -54,9 +54,8 @@ class AptemODataStream(RESTStream):
     # False
     check_sorted = False
 
-    # keys besides the replication key that also show a change to a record - sync the
-    # records that changed on any key, as a record can change on one key but not on
-    # another
+    # keys to fall back on in order where the replication key is null - sync the records
+    # whose first key with a value is on or after the bookmark
     additional_replication_keys: tuple[str, ...] = ()
 
     @property
@@ -121,9 +120,15 @@ class AptemODataStream(RESTStream):
         if isinstance(next_page_token, str):
             filters.append(f"{self.replication_key} gt {next_page_token}")
         elif starting_timestamp := self.get_starting_timestamp(context):
+            keys = (self.replication_key, *self.additional_replication_keys)
             key_filters = (
-                f"{key} ge {starting_timestamp.isoformat()}"
-                for key in (self.replication_key, *self.additional_replication_keys)
+                " and ".join(
+                    [
+                        *(f"{null_key} eq null" for null_key in keys[:i]),
+                        f"{key} ge {starting_timestamp.isoformat()}",
+                    ]
+                )
+                for i, key in enumerate(keys)
             )
             filters.append(f"({' or '.join(key_filters)})")
 
