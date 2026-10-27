@@ -107,8 +107,10 @@ class AptemODataStream(RESTStream):
         params["$top"] = self.page_size
 
         if self.additional_replication_keys:
-            # a record keeps its place in the order when it changes during the sync
-            params["$orderby"] = ",".join(self.primary_keys)
+            # these records page by offset, so order them first by the last fallback
+            # key, which a change during the sync is least likely to alter
+            keys = (self.replication_key, *self.additional_replication_keys)
+            params["$orderby"] = ",".join(reversed(keys))
         elif self.replication_key:
             params["$orderby"] = self.replication_key
 

@@ -159,7 +159,9 @@ class ReviewsAdapter(BaseAdapter):
                 for review in self.reviews
                 if "$filter" not in query or _matches(review, query["$filter"])
             ),
-            key=lambda review: review[query["$orderby"]],
+            key=lambda review: tuple(
+                review[key] or "" for key in query["$orderby"].split(",")
+            ),
         )
 
         body = {"value": reviews[skip : skip + int(query["$top"])]}
