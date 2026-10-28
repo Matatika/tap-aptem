@@ -11,6 +11,7 @@ from typing_extensions import override
 
 from tap_aptem import metadata
 from tap_aptem.client import (
+    STREAM_REPLICATION_KEYS,
     AptemODataStream,
     AptemODataV2Stream,
     EmbeddedCollectionStream,
@@ -19,48 +20,6 @@ from tap_aptem.client import (
 ODATA_VERSION_STREAM_CLASSES = {
     "1.0": AptemODataStream,
     "2.0": AptemODataV2Stream,
-}
-
-STREAM_REPLICATION_KEYS = {
-    "AimWorkPlacements": "WorkPlaceStartDate",
-    "ApprenticeshipFinancialRecords": "Date",
-    "AptemCognitiveAssessments": "DateStart",
-    "Actions": "UpdatedDate",
-    "AwardingBodyQualifications": "UpdatedDate",
-    "AwardingBodyQualificationsAssessmentHistory": "Date",
-    "CheckpointAssessments": "LastModifiedDate",
-    "ComplianceDocuments": "Date",
-    "ComponentDueDateChanges": "ChangeDate",
-    "CrmActivities": "UpdatedDate",
-    "DestinationProgressions": "StartDate",
-    "EmployerGroups": "UpdatedDate",
-    "EPAErrors": "Date",
-    "Episodes": "UpdatedDate",
-    "Groups": "UpdatedDate",
-    "HoursRecords": None,
-    "IlrAims": "UpdatedDate",
-    "IlrLearner": "UpdatedDate",
-    "Jobs": "UpdatedDate",
-    "LearnerEmployment": "EmploymentStartDate",
-    "LearningPlanComponents": "UpdatedDate",
-    "LearningPlanEvidences": "UpdatedDate",
-    "LearningPlanEvidenceWithActivityData": "UpdatedDate",
-    "MaximumProgrammeDataFields": None,
-    "Messages": "CreatedDate",
-    "Milestones": None,
-    "Notes": "Date",
-    "OnboardingResponses": "Date",
-    "OrganizationContacts": None,
-    "Organizations": "UpdatedDate",
-    "ReviewResponses": "UpdatedDate",
-    # Aptem leaves `UpdatedDate` null until a review is first updated
-    "Reviews": ("UpdatedDate", "CreatedDate"),
-    "Tasks": "UpdatedDate",
-    "Trackers": "UpdatedDate",
-    "Users": "UpdatedDate",
-    "UserGroups": None,
-    "VirtualAssistantExchanges": "Date",
-    "WithdrawalReasons": "DateAdded",
 }
 
 
@@ -132,7 +91,7 @@ class TapAptem(Tap):
             stream.primary_keys = entity.primary_keys
 
             try:
-                replication_key = STREAM_REPLICATION_KEYS[stream.name]
+                replication_keys = STREAM_REPLICATION_KEYS[stream.name]
             except KeyError:
                 if not isinstance(stream, EmbeddedCollectionStream):
                     self.logger.warning(
@@ -140,13 +99,9 @@ class TapAptem(Tap):
                         stream.name,
                     )
 
-                replication_key = None
+                replication_keys = ()
 
-            if isinstance(replication_key, tuple):
-                replication_key, *additional_keys = replication_key
-                stream.additional_replication_keys = tuple(additional_keys)
-
-            stream.replication_key = replication_key
+            stream.replication_key = next(iter(replication_keys), None)
 
             yield stream
 

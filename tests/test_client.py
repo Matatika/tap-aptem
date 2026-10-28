@@ -124,18 +124,23 @@ def test_odata_v2_sync_gets_every_record(replication_key):
     assert ids == list(range(RECORD_COUNT))  # noqa: S101
 
 
-def _holds(review, field, value):
+def _holds(review, field, operator, value):
     if value == "null":
         return review[field] is None
 
-    return review[field] is not None and review[field] >= value
+    if review[field] is None:
+        return False
+
+    return review[field] > value if operator == "gt" else review[field] >= value
 
 
 def _matches(review, condition):
     return any(
         all(
-            _holds(review, field, value)
-            for field, _, value in (term.split(" ") for term in group.split(" and "))
+            _holds(review, field, operator, value)
+            for field, operator, value in (
+                term.split(" ") for term in group.split(" and ")
+            )
         )
         for group in condition.strip("()").split(" or ")
     )
@@ -220,7 +225,6 @@ def test_reviews_sync_incrementally(monkeypatch, capsys):
         )
         stream.primary_keys = ("Id",)
         stream.replication_key = "UpdatedDate"
-        stream.additional_replication_keys = ("CreatedDate",)
         stream.requests_session.mount("https://", ReviewsAdapter(reviews))
         return [stream]
 
@@ -238,3 +242,49 @@ def test_reviews_sync_incrementally(monkeypatch, capsys):
     records = _sync(tap, capsys)
 
     assert [record["Id"] for record in records] == [2, 3, 5, 6]  # noqa: S101
+
+
+def test_catalog_replication_key_syncs_alone(monkeypatch, capsys):
+    """Sync on a catalog replication key for a stream with no configured key."""
+    records = [{"Id": i, "Date": f"2026-01-{i:02}T00:00:00+00:00"} for i in range(1, 6)]
+
+    def discover_streams(tap):
+        stream = AptemODataStream(
+            tap,
+            name="HoursRecords",
+            schema={
+                "properties": {
+                    "Id": {"type": "integer"},
+                    "Date": {"type": ["string", "null"], "format": "date-time"},
+                },
+            },
+            path="/HoursRecords",
+        )
+        stream.requests_session.mount("https://", ReviewsAdapter(records))
+        return [stream]
+
+    monkeypatch.setattr(TapAptem, "discover_streams", discover_streams)
+    config = {"tenant_name": "tenant", "api_token": "token"}
+
+    catalog = TapAptem(config=config).catalog_dict
+    catalog["streams"][0] |= {
+        "replication_key": "Date",
+        "replication_method": "INCREMENTAL",
+    }
+
+    tap = TapAptem(
+        config=config,
+        catalog=catalog,
+        state={
+            "bookmarks": {
+                "HoursRecords": {
+                    "replication_key": "Date",
+                    "replication_key_value": "2026-01-03T00:00:00+00:00",
+                },
+            },
+        },
+    )
+
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == [3, 4, 5]  # noqa: S101
