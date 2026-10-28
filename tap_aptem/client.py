@@ -118,6 +118,9 @@ class AptemODataStream(RESTStream):
     @override
     @property
     def is_sorted(self):
+        # records are in replication key order only for a single key - with fallbacks,
+        # the order puts the last fallback first, and a record with a null replication
+        # key has no bookmark value
         return len(self.replication_keys) == 1
 
     @override
