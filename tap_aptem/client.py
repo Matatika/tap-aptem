@@ -28,6 +28,48 @@ V1_ENTITY_RECORD_LIMITS = {
     "ReviewResponses": 5000,
 }
 
+STREAM_REPLICATION_KEYS = {
+    "AimWorkPlacements": ("WorkPlaceStartDate",),
+    "ApprenticeshipFinancialRecords": ("Date",),
+    "AptemCognitiveAssessments": ("DateStart",),
+    "Actions": ("UpdatedDate",),
+    "AwardingBodyQualifications": ("UpdatedDate",),
+    "AwardingBodyQualificationsAssessmentHistory": ("Date",),
+    "CheckpointAssessments": ("LastModifiedDate",),
+    "ComplianceDocuments": ("Date",),
+    "ComponentDueDateChanges": ("ChangeDate",),
+    "CrmActivities": ("UpdatedDate",),
+    "DestinationProgressions": ("StartDate",),
+    "EmployerGroups": ("UpdatedDate",),
+    "EPAErrors": ("Date",),
+    "Episodes": ("UpdatedDate",),
+    "Groups": ("UpdatedDate",),
+    "HoursRecords": (),
+    "IlrAims": ("UpdatedDate",),
+    "IlrLearner": ("UpdatedDate",),
+    "Jobs": ("UpdatedDate",),
+    "LearnerEmployment": ("EmploymentStartDate",),
+    "LearningPlanComponents": ("UpdatedDate",),
+    "LearningPlanEvidences": ("UpdatedDate",),
+    "LearningPlanEvidenceWithActivityData": ("UpdatedDate",),
+    "MaximumProgrammeDataFields": (),
+    "Messages": ("CreatedDate",),
+    "Milestones": (),
+    "Notes": ("Date",),
+    "OnboardingResponses": ("Date",),
+    "OrganizationContacts": (),
+    "Organizations": ("UpdatedDate",),
+    "ReviewResponses": ("UpdatedDate",),
+    # Aptem leaves `UpdatedDate` null until a review is first updated
+    "Reviews": ("UpdatedDate", "CreatedDate"),
+    "Tasks": ("UpdatedDate",),
+    "Trackers": ("UpdatedDate",),
+    "Users": ("UpdatedDate",),
+    "UserGroups": (),
+    "VirtualAssistantExchanges": ("Date",),
+    "WithdrawalReasons": ("DateAdded",),
+}
+
 # streams updated so frequently during working hours that records are changed faster
 # than pages can be requested, so pagination never reaches an empty page - bound the
 # sync to records updated before the sync started (picked up by the next sync instead)
@@ -52,17 +94,38 @@ class AptemODataStream(RESTStream):
     #
     # >>> "2025-11-25T10:57:52.6880167Z" > "2025-11-25T10:57:52.68Z"
     # False
-    check_sorted = False
+    @override
+    @property
+    def check_sorted(self):
+        # an unsorted stream keeps the highest replication key value only if this is set
+        return not self.is_sorted
 
     @property
     def page_size(self):
         """Number of entity records to request at a time."""
         return V1_ENTITY_RECORD_LIMITS.get(self.name, 10000)
 
+    @property
+    def replication_keys(self):
+        """Replication key, then its fallbacks where the earlier keys are null.
+
+        A record syncs if its first key with a value is on or after the bookmark. A key
+        that a catalog sets in place of the configured key has no fallbacks.
+        """
+        keys = STREAM_REPLICATION_KEYS.get(self.name, ())
+
+        if self.replication_key in keys[:1]:
+            return keys
+
+        return (self.replication_key,) if self.replication_key else ()
+
     @override
     @property
     def is_sorted(self):
-        return bool(self.replication_key)
+        # records are in replication key order only for a single key - with fallbacks,
+        # the order puts the last fallback first, and a record with a null replication
+        # key has no bookmark value
+        return len(self.replication_keys) == 1
 
     @override
     @property
@@ -88,7 +151,7 @@ class AptemODataStream(RESTStream):
 
     @override
     def get_new_paginator(self):
-        if self.replication_method == "FULL_TABLE" or not self.replication_key:
+        if self.replication_method == "FULL_TABLE" or not self.is_sorted:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
         def get_replication_key_value(response: requests.Response):  # noqa: ARG001
@@ -102,8 +165,10 @@ class AptemODataStream(RESTStream):
         params = super().get_url_params(context, next_page_token)
         params["$top"] = self.page_size
 
-        if self.replication_key:
-            params["$orderby"] = self.replication_key
+        if self.replication_keys:
+            # records can page by offset, so order them first by the last fallback key,
+            # which a change during the sync is least likely to alter
+            params["$orderby"] = ",".join(reversed(self.replication_keys))
 
         if isinstance(next_page_token, int):
             params["$skip"] = next_page_token
@@ -113,9 +178,17 @@ class AptemODataStream(RESTStream):
         if isinstance(next_page_token, str):
             filters.append(f"{self.replication_key} gt {next_page_token}")
         elif starting_timestamp := self.get_starting_timestamp(context):
-            filters.append(
-                f"{self.replication_key} ge {starting_timestamp.isoformat()}"
+            keys = self.replication_keys
+            key_filters = (
+                " and ".join(
+                    [
+                        *(f"{null_key} eq null" for null_key in keys[:i]),
+                        f"{key} ge {starting_timestamp.isoformat()}",
+                    ]
+                )
+                for i, key in enumerate(keys)
             )
+            filters.append(f"({' or '.join(key_filters)})")
 
         if self.name in BOUNDED_SYNC_STREAMS and (
             signpost := self.get_replication_key_signpost(context)
