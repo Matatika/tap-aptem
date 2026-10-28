@@ -243,6 +243,10 @@ def test_reviews_sync_incrementally(monkeypatch, capsys):
 
     assert [record["Id"] for record in records] == [2, 3, 5, 6]  # noqa: S101
 
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == [2, 6]  # noqa: S101
+
 
 def test_catalog_replication_key_syncs_alone(monkeypatch, capsys):
     """Sync on a catalog replication key for a stream with no configured key."""

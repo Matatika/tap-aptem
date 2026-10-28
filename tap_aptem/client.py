@@ -94,7 +94,11 @@ class AptemODataStream(RESTStream):
     #
     # >>> "2025-11-25T10:57:52.6880167Z" > "2025-11-25T10:57:52.68Z"
     # False
-    check_sorted = False
+    @override
+    @property
+    def check_sorted(self):
+        # an unsorted stream keeps the highest replication key value only if this is set
+        return not self.is_sorted
 
     @property
     def page_size(self):
