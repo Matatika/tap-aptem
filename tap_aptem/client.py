@@ -119,6 +119,21 @@ class AptemODataStream(RESTStream):
 
         return (self.replication_key,) if self.replication_key else ()
 
+    @property
+    def tiebreak_key(self):
+        """Primary key that orders records sharing a replication key value.
+
+        Only a single integer key, which an OData filter compares without quotes.
+        """
+        if len(self.primary_keys or ()) != 1:
+            return None
+
+        key = self.primary_keys[0]
+        key_type = self.schema["properties"].get(key, {}).get("type")
+        key_types = key_type if isinstance(key_type, list) else [key_type]
+
+        return key if "integer" in key_types else None
+
     @override
     @property
     def is_sorted(self):
@@ -154,6 +169,20 @@ class AptemODataStream(RESTStream):
         if self.replication_method == "FULL_TABLE" or not self.is_sorted:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
+        if self.tiebreak_key:
+            # page after the last record's replication key value *and* key: paging on
+            # `gt` the replication key value alone skips the rest of the records that
+            # share it when a page ends partway through them
+            def get_last_record_position(response: requests.Response):
+                # a page is only advanced past once it has records
+                last_record = response.json()["value"][-1]
+                return (
+                    last_record.get(self.replication_key),
+                    last_record[self.tiebreak_key],
+                )
+
+            return CallbackPaginator(get_last_record_position)
+
         def get_replication_key_value(response: requests.Response):  # noqa: ARG001
             state = self.get_context_state(self.context)
             return state.get("replication_key_value")
@@ -168,12 +197,20 @@ class AptemODataStream(RESTStream):
         if self.replication_keys:
             # records can page by offset, so order them first by the last fallback key,
             # which a change during the sync is least likely to alter
-            params["$orderby"] = ",".join(reversed(self.replication_keys))
+            order = [*reversed(self.replication_keys)]
+
+            if self.is_sorted and self.tiebreak_key:
+                order.append(self.tiebreak_key)
+
+            params["$orderby"] = ",".join(order)
 
         if isinstance(next_page_token, int):
             params["$skip"] = next_page_token
 
         filters = []
+
+        if isinstance(next_page_token, tuple):
+            filters.append(self._after_position_filter(*next_page_token))
 
         if isinstance(next_page_token, str):
             filters.append(f"{self.replication_key} gt {next_page_token}")
@@ -208,6 +245,17 @@ class AptemODataStream(RESTStream):
             params["$select"] = ",".join(selected_columns)
 
         return params
+
+    def _after_position_filter(self, value, key_value):
+        """Filter records ordered after a replication key value and key."""
+        key = self.replication_key
+        after_key = f"{self.tiebreak_key} gt {key_value}"
+
+        if value is None:
+            # null replication key values are ordered first
+            return f"({key} ne null or ({key} eq null and {after_key}))"
+
+        return f"({key} gt {value} or ({key} eq {value} and {after_key}))"
 
     @override
     def validate_response(self, response):
@@ -307,6 +355,11 @@ class EmbeddedCollectionStream(AptemODataStream):
     def __init__(self, /, parent_key_map: dict[str, str], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.parent_key_map = parent_key_map
+
+    @property
+    def tiebreak_key(self):
+        """No key: a response holds parent entities, selected down to their keys."""
+        return None
 
     @override
     def get_url_params(self, context, next_page_token):
