@@ -292,3 +292,128 @@ def test_catalog_replication_key_syncs_alone(monkeypatch, capsys):
     records = _sync(tap, capsys)
 
     assert [record["Id"] for record in records] == [3, 4, 5]  # noqa: S101
+
+
+def _evaluate(expression, record):
+    """Evaluate an OData `$filter` of comparisons, `and`, `or` and parentheses."""
+    tokens = expression.replace("(", " ( ").replace(")", " ) ").split()
+
+    def parse_or(i):
+        result, i = parse_and(i)
+        while i < len(tokens) and tokens[i] == "or":
+            right, i = parse_and(i + 1)
+            result = result or right
+        return result, i
+
+    def parse_and(i):
+        result, i = parse_term(i)
+        while i < len(tokens) and tokens[i] == "and":
+            right, i = parse_term(i + 1)
+            result = result and right
+        return result, i
+
+    def parse_term(i):
+        if tokens[i] == "(":
+            result, i = parse_or(i + 1)
+            return result, i + 1
+
+        field, operator, literal = tokens[i : i + 3]
+        value = record[field]
+        other = None if literal == "null" else type(value or "")(literal)
+
+        if operator in ("eq", "ne"):
+            return (value == other) == (operator == "eq"), i + 3
+
+        if value is None or other is None:
+            return False, i + 3
+
+        compare = {"gt": value > other, "ge": value >= other, "le": value <= other}
+        return compare[operator], i + 3
+
+    return parse_or(0)[0]
+
+
+class FilteringAdapter(BaseAdapter):
+    """Serve records with the OData filter, order, and page of each request."""
+
+    def __init__(self, records) -> None:
+        """Serve these records."""
+        super().__init__()
+        self.records = records
+
+    def send(self, request, **kwargs):  # noqa: ARG002, D102
+        query = {k: v[0] for k, v in parse_qs(urlparse(request.url).query).items()}
+        skip = int(query.get("$skip", 0))
+
+        records = sorted(
+            (
+                record
+                for record in self.records
+                if "$filter" not in query or _evaluate(query["$filter"], record)
+            ),
+            key=lambda record: tuple(
+                (record[key] is not None, record[key] or "")
+                for key in query["$orderby"].split(",")
+            ),
+        )
+
+        body = {"value": records[skip : skip + int(query["$top"])]}
+
+        response = requests.Response()
+        response.status_code = 200
+        response.raw = io.BytesIO(json.dumps(body).encode())
+        response.request = request
+        return response
+
+    def close(self):  # noqa: D102
+        pass
+
+
+def test_sync_gets_every_record_sharing_a_replication_key_value(monkeypatch, capsys):
+    """Get every record that shares a replication key value across a page end."""
+    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Tasks", 3)
+
+    def task(task_id, updated_date):
+        return {"Id": task_id, "UpdatedDate": updated_date}
+
+    tasks = [
+        task(1, None),
+        task(2, None),
+        task(3, None),
+        task(4, None),
+        task(5, "2026-01-01T00:00:00+00:00"),
+        # a page ends partway through these records, which share a value
+        *(task(task_id, "2026-01-02T00:00:00+00:00") for task_id in range(6, 13)),
+        task(13, "2026-01-03T00:00:00+00:00"),
+    ]
+
+    def discover_streams(tap):
+        stream = AptemODataStream(
+            tap,
+            name="Tasks",
+            schema={
+                "properties": {
+                    "Id": {"type": "integer"},
+                    "UpdatedDate": {"type": ["string", "null"], "format": "date-time"},
+                },
+            },
+            path="/Tasks",
+        )
+        stream.primary_keys = ("Id",)
+        stream.replication_key = "UpdatedDate"
+        stream.requests_session.mount("https://", FilteringAdapter(tasks))
+        return [stream]
+
+    monkeypatch.setattr(TapAptem, "discover_streams", discover_streams)
+    tap = TapAptem(config={"tenant_name": "tenant", "api_token": "token"})
+
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == list(range(1, 14))  # noqa: S101
+
+    # the next sync starts from the bookmark, inclusive
+    tasks.extend(task(task_id, "2026-01-03T00:00:00+00:00") for task_id in (14, 15))
+
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == [13, 14, 15]  # noqa: S101
