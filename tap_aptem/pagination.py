@@ -4,26 +4,51 @@
 
 from __future__ import annotations
 
-import typing as t
+from typing import NamedTuple
 
 from singer_sdk.pagination import BaseAPIPaginator, BaseHATEOASPaginator
 from typing_extensions import override
 
-if t.TYPE_CHECKING:
-    import requests
+
+class ReplicationKeyToken(NamedTuple):
+    """The last replication key value and the records with it to skip."""
+
+    value: str | None
+    skip: int
 
 
-class CallbackPaginator(BaseAPIPaginator):
-    """Paginator class that invokes a callback function to get the next value."""
+class ReplicationKeyPaginator(BaseAPIPaginator[ReplicationKeyToken]):
+    """Paginator class that pages from the last replication key value of each page."""
 
-    @override
-    def __init__(self, get_next_value: t.Callable[[requests.Response], t.Any]) -> None:
-        super().__init__(None)
-        self.get_next_value = get_next_value
+    def __init__(self, replication_key: str, page_size: int) -> None:
+        """Page on this replication key, with pages of this size."""
+        super().__init__(ReplicationKeyToken(value=None, skip=0))
+        self.replication_key = replication_key
+        self.page_size = page_size
 
     @override
     def get_next(self, response):
-        return self.get_next_value(response)
+        records = response.json()["value"]
+
+        # Aptem rejects a page size over its limit, so only the last page is short
+        if len(records) < self.page_size:
+            return None
+
+        first_value = records[0][self.replication_key]
+        value = records[-1][self.replication_key]
+
+        # a record that changes before the next page shifts a skip, so skip only past
+        # a page of one value, which `ge` alone would request again
+        if first_value != value:
+            return ReplicationKeyToken(value, skip=0)
+
+        skip = len(records)
+
+        # a page of only the previous value follows the records already skipped
+        if value == self.current_value.value:
+            skip += self.current_value.skip
+
+        return ReplicationKeyToken(value, skip)
 
 
 class ODataNextLinkPaginator(BaseHATEOASPaginator):
