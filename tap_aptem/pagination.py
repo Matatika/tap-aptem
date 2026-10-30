@@ -11,10 +11,10 @@ from typing_extensions import override
 
 
 class ReplicationKeyToken(NamedTuple):
-    """The last replication key value and the records with it already received."""
+    """The last replication key value and the records with it to skip."""
 
     value: str | None
-    received: int
+    skip: int
 
 
 class ReplicationKeyPaginator(BaseAPIPaginator[ReplicationKeyToken]):
@@ -22,20 +22,27 @@ class ReplicationKeyPaginator(BaseAPIPaginator[ReplicationKeyToken]):
 
     def __init__(self, replication_key: str) -> None:
         """Page on this replication key."""
-        super().__init__(ReplicationKeyToken(value=None, received=0))
+        super().__init__(ReplicationKeyToken(value=None, skip=0))
         self.replication_key = replication_key
 
     @override
     def get_next(self, response):
-        values = [record[self.replication_key] for record in response.json()["value"]]
-        value = values[-1]
-        received = values.count(value)
+        records = response.json()["value"]
+        first_value = records[0][self.replication_key]
+        value = records[-1][self.replication_key]
 
-        # a page of only the previous value follows the records already received
+        # a record that changes before the next page shifts a skip, so skip only past
+        # a page of one value, which `ge` alone would request again
+        if first_value != value:
+            return ReplicationKeyToken(value, skip=0)
+
+        skip = len(records)
+
+        # a page of only the previous value follows the records already skipped
         if value == self.current_value.value:
-            received += self.current_value.received
+            skip += self.current_value.skip
 
-        return ReplicationKeyToken(value, received)
+        return ReplicationKeyToken(value, skip)
 
 
 class ODataNextLinkPaginator(BaseHATEOASPaginator):

@@ -291,27 +291,18 @@ def test_catalog_replication_key_syncs_alone(monkeypatch, capsys):
 
     records = _sync(tap, capsys)
 
-    assert [record["Id"] for record in records] == [3, 4, 5]  # noqa: S101
+    # `ge` sends the last record again
+    assert [record["Id"] for record in records] == [3, 4, 5, 5]  # noqa: S101
 
 
-def test_sync_gets_every_record_sharing_a_replication_key_value(monkeypatch, capsys):
-    """Get every record that shares a replication key value across page ends."""
-    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Tasks", 3)
+def _task(task_id, updated_day=None):
+    return {
+        "Id": task_id,
+        "UpdatedDate": updated_day and f"2026-01-{updated_day:02}T00:00:00+00:00",
+    }
 
-    def task(task_id, updated_day=None):
-        return {
-            "Id": task_id,
-            "UpdatedDate": updated_day and f"2026-01-{updated_day:02}T00:00:00+00:00",
-        }
 
-    tasks = [
-        *(task(task_id) for task_id in range(1, 5)),
-        task(5, updated_day=1),
-        # more records share this value than a page holds
-        *(task(task_id, updated_day=2) for task_id in range(6, 13)),
-        task(13, updated_day=3),
-    ]
-
+def _tasks_tap(monkeypatch, adapter):
     def discover_streams(tap):
         stream = AptemODataStream(
             tap,
@@ -326,18 +317,58 @@ def test_sync_gets_every_record_sharing_a_replication_key_value(monkeypatch, cap
         )
         stream.primary_keys = ("Id",)
         stream.replication_key = "UpdatedDate"
-        stream.requests_session.mount("https://", ReviewsAdapter(tasks))
+        stream.requests_session.mount("https://", adapter)
         return [stream]
 
     monkeypatch.setattr(TapAptem, "discover_streams", discover_streams)
-    tap = TapAptem(config={"tenant_name": "tenant", "api_token": "token"})
+    return TapAptem(config={"tenant_name": "tenant", "api_token": "token"})
+
+
+def test_sync_gets_every_record_sharing_a_replication_key_value(monkeypatch, capsys):
+    """Get every record that shares a replication key value across page ends."""
+    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Tasks", 3)
+
+    tasks = [
+        *(_task(task_id) for task_id in range(1, 5)),
+        _task(5, updated_day=1),
+        # more records share this value than a page holds
+        *(_task(task_id, updated_day=2) for task_id in range(6, 13)),
+        _task(13, updated_day=3),
+    ]
+    tap = _tasks_tap(monkeypatch, ReviewsAdapter(tasks))
 
     records = _sync(tap, capsys)
 
-    assert [record["Id"] for record in records] == list(range(1, 14))  # noqa: S101
+    # `ge` sends the last record of a page that ends partway through its values again
+    assert [record["Id"] for record in records] == [  # noqa: S101
+        *range(1, 7),
+        *range(6, 14),
+        13,
+    ]
 
-    tasks.extend(task(task_id, updated_day=3) for task_id in (14, 15))
+    tasks.extend(_task(task_id, updated_day=3) for task_id in (14, 15))
 
     records = _sync(tap, capsys)
 
     assert [record["Id"] for record in records] == [13, 14, 15]  # noqa: S101
+
+
+class ChangingTasksAdapter(ReviewsAdapter):
+    """Serve tasks, and update the second task after each request."""
+
+    def send(self, request, **kwargs):  # noqa: D102
+        response = super().send(request, **kwargs)
+        self.reviews[1] = _task(2, updated_day=5)
+        return response
+
+
+def test_sync_gets_every_record_when_a_page_end_changes(monkeypatch, capsys):
+    """Get every record when the last record of a page changes before the next page."""
+    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Tasks", 2)
+
+    tasks = [_task(task_id, updated_day=task_id) for task_id in range(1, 5)]
+    tap = _tasks_tap(monkeypatch, ChangingTasksAdapter(tasks))
+
+    records = _sync(tap, capsys)
+
+    assert {record["Id"] for record in records} == {1, 2, 3, 4}  # noqa: S101
