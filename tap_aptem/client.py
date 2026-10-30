@@ -14,7 +14,11 @@ from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream
 from typing_extensions import override
 
-from tap_aptem.pagination import ODataNextLinkPaginator, ReplicationKeyPaginator
+from tap_aptem.pagination import (
+    ODataNextLinkPaginator,
+    ReplicationKeyPaginator,
+    ReplicationKeyToken,
+)
 
 if TYPE_CHECKING:
     import requests
@@ -166,17 +170,18 @@ class AptemODataStream(RESTStream):
             # which a change during the sync is least likely to alter
             params["$orderby"] = ",".join(reversed(self.replication_keys))
 
+        replication_key_value = None
+
         if isinstance(next_page_token, int):
             params["$skip"] = next_page_token
+        elif isinstance(next_page_token, ReplicationKeyToken):
+            replication_key_value, params["$skip"] = next_page_token
 
         filters = []
 
-        if isinstance(next_page_token, tuple):
-            replication_key_value, params["$skip"] = next_page_token
-
-            # null values are ordered first, and only requested without a start date
-            if replication_key_value is not None:
-                filters.append(f"{self.replication_key} ge {replication_key_value}")
+        # null values are ordered first, and only requested without a start date
+        if replication_key_value is not None:
+            filters.append(f"{self.replication_key} ge {replication_key_value}")
         elif starting_timestamp := self.get_starting_timestamp(context):
             keys = self.replication_keys
             key_filters = (
