@@ -158,7 +158,7 @@ class AptemODataStream(RESTStream):
         if self.replication_method == "FULL_TABLE" or not self.is_sorted:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
-        return ReplicationKeyPaginator(self.replication_key)
+        return ReplicationKeyPaginator(self.replication_key, self.page_size)
 
     @override
     def get_url_params(self, context, next_page_token):

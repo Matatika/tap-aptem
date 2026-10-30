@@ -20,14 +20,20 @@ class ReplicationKeyToken(NamedTuple):
 class ReplicationKeyPaginator(BaseAPIPaginator[ReplicationKeyToken]):
     """Paginator class that pages from the last replication key value of each page."""
 
-    def __init__(self, replication_key: str) -> None:
-        """Page on this replication key."""
+    def __init__(self, replication_key: str, page_size: int) -> None:
+        """Page on this replication key, with pages of this size."""
         super().__init__(ReplicationKeyToken(value=None, skip=0))
         self.replication_key = replication_key
+        self.page_size = page_size
 
     @override
     def get_next(self, response):
         records = response.json()["value"]
+
+        # Aptem rejects a page size over its limit, so only the last page is short
+        if len(records) < self.page_size:
+            return None
+
         first_value = records[0][self.replication_key]
         value = records[-1][self.replication_key]
 

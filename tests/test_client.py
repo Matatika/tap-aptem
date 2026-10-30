@@ -291,8 +291,7 @@ def test_catalog_replication_key_syncs_alone(monkeypatch, capsys):
 
     records = _sync(tap, capsys)
 
-    # `ge` sends the last record again
-    assert [record["Id"] for record in records] == [3, 4, 5, 5]  # noqa: S101
+    assert [record["Id"] for record in records] == [3, 4, 5]  # noqa: S101
 
 
 def _task(task_id, updated_day=None):
@@ -343,7 +342,6 @@ def test_sync_gets_every_record_sharing_a_replication_key_value(monkeypatch, cap
     assert [record["Id"] for record in records] == [  # noqa: S101
         *range(1, 7),
         *range(6, 14),
-        13,
     ]
 
     tasks.extend(_task(task_id, updated_day=3) for task_id in (14, 15))
