@@ -14,7 +14,7 @@ from singer_sdk.pagination import BaseOffsetPaginator
 from singer_sdk.streams import RESTStream
 from typing_extensions import override
 
-from tap_aptem.pagination import CallbackPaginator, ODataNextLinkPaginator
+from tap_aptem.pagination import ODataNextLinkPaginator, ReplicationKeyPaginator
 
 if TYPE_CHECKING:
     import requests
@@ -154,11 +154,7 @@ class AptemODataStream(RESTStream):
         if self.replication_method == "FULL_TABLE" or not self.is_sorted:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
-        def get_replication_key_value(response: requests.Response):  # noqa: ARG001
-            state = self.get_context_state(self.context)
-            return state.get("replication_key_value")
-
-        return CallbackPaginator(get_replication_key_value)
+        return ReplicationKeyPaginator(self.replication_key)
 
     @override
     def get_url_params(self, context, next_page_token):
@@ -175,8 +171,12 @@ class AptemODataStream(RESTStream):
 
         filters = []
 
-        if isinstance(next_page_token, str):
-            filters.append(f"{self.replication_key} gt {next_page_token}")
+        if isinstance(next_page_token, tuple):
+            replication_key_value, params["$skip"] = next_page_token
+
+            # null values are ordered first, and only requested without a start date
+            if replication_key_value is not None:
+                filters.append(f"{self.replication_key} ge {replication_key_value}")
         elif starting_timestamp := self.get_starting_timestamp(context):
             keys = self.replication_keys
             key_filters = (

@@ -292,3 +292,52 @@ def test_catalog_replication_key_syncs_alone(monkeypatch, capsys):
     records = _sync(tap, capsys)
 
     assert [record["Id"] for record in records] == [3, 4, 5]  # noqa: S101
+
+
+def test_sync_gets_every_record_sharing_a_replication_key_value(monkeypatch, capsys):
+    """Get every record that shares a replication key value across page ends."""
+    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Tasks", 3)
+
+    def task(task_id, updated_day=None):
+        return {
+            "Id": task_id,
+            "UpdatedDate": updated_day and f"2026-01-{updated_day:02}T00:00:00+00:00",
+        }
+
+    tasks = [
+        *(task(task_id) for task_id in range(1, 5)),
+        task(5, updated_day=1),
+        # more records share this value than a page holds
+        *(task(task_id, updated_day=2) for task_id in range(6, 13)),
+        task(13, updated_day=3),
+    ]
+
+    def discover_streams(tap):
+        stream = AptemODataStream(
+            tap,
+            name="Tasks",
+            schema={
+                "properties": {
+                    "Id": {"type": "integer"},
+                    "UpdatedDate": {"type": ["string", "null"], "format": "date-time"},
+                },
+            },
+            path="/Tasks",
+        )
+        stream.primary_keys = ("Id",)
+        stream.replication_key = "UpdatedDate"
+        stream.requests_session.mount("https://", ReviewsAdapter(tasks))
+        return [stream]
+
+    monkeypatch.setattr(TapAptem, "discover_streams", discover_streams)
+    tap = TapAptem(config={"tenant_name": "tenant", "api_token": "token"})
+
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == list(range(1, 14))  # noqa: S101
+
+    tasks.extend(task(task_id, updated_day=3) for task_id in (14, 15))
+
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == [13, 14, 15]  # noqa: S101

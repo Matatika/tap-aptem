@@ -4,26 +4,33 @@
 
 from __future__ import annotations
 
-import typing as t
-
 from singer_sdk.pagination import BaseAPIPaginator, BaseHATEOASPaginator
 from typing_extensions import override
 
-if t.TYPE_CHECKING:
-    import requests
 
+class ReplicationKeyPaginator(BaseAPIPaginator):
+    """Paginator class that pages from the last replication key value of each page.
 
-class CallbackPaginator(BaseAPIPaginator):
-    """Paginator class that invokes a callback function to get the next value."""
+    Each value is the last replication key value and the number of records with it
+    already received, which the next page skips.
+    """
 
-    @override
-    def __init__(self, get_next_value: t.Callable[[requests.Response], t.Any]) -> None:
+    def __init__(self, replication_key: str) -> None:
+        """Page on this replication key."""
         super().__init__(None)
-        self.get_next_value = get_next_value
+        self.replication_key = replication_key
 
     @override
     def get_next(self, response):
-        return self.get_next_value(response)
+        values = [record[self.replication_key] for record in response.json()["value"]]
+        value = values[-1]
+        received = values.count(value)
+
+        # a page of only the previous value follows the records that it skipped
+        if self.current_value and self.current_value[0] == value:
+            received += self.current_value[1]
+
+        return value, received
 
 
 class ODataNextLinkPaginator(BaseHATEOASPaginator):
