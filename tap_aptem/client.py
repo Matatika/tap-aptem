@@ -157,22 +157,13 @@ class AptemODataStream(RESTStream):
             self.logger.warning(e)
 
     @property
-    def record_keys(self):
-        """Primary keys of each record in a response, mapped to their schema names."""
-        return {key: key for key in self.primary_keys or ()}
-
-    @property
     def page_key(self):
         """Key that a full-table sync pages by, or `None` to page by offset.
 
-        A composite key has no single value to page after, and only an integer is
-        compared and ordered alike at every layer of Aptem.
+        A composite key has no single value to page after.
         """
-        if self.replication_method == "FULL_TABLE" and len(self.record_keys) == 1:
-            ((key, schema_key),) = self.record_keys.items()
-
-            if "integer" in self.schema["properties"][schema_key]["type"]:
-                return key
+        if self.replication_method == "FULL_TABLE" and len(self.primary_keys) == 1:
+            return self.primary_keys[0]
 
         return None
 
@@ -354,9 +345,12 @@ class EmbeddedCollectionStream(AptemODataStream):
 
     @override
     @property
-    def record_keys(self):
-        # a response holds the parent records
-        return self.parent_key_map
+    def page_key(self):
+        # a response holds the parent records, so a sync pages by the parent key
+        if len(self.parent_key_map) == 1:
+            return next(iter(self.parent_key_map))
+
+        return None
 
     @override
     def get_url_params(self, context, next_page_token):

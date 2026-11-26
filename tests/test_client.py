@@ -424,16 +424,14 @@ class DeepSkipLimitedAdapter(BaseAdapter):
         pass
 
 
-def _full_table_tap(
-    monkeypatch, stream_name, adapter, primary_keys=("Id",), key_type="integer"
-):
+def _full_table_tap(monkeypatch, stream_name, adapter, primary_keys=("Id",)):
     def discover_streams(tap):
         stream = AptemODataStream(
             tap,
             name=stream_name,
             schema={
                 "properties": {
-                    "Id": {"type": key_type},
+                    "Id": {"type": "integer"},
                     "Name": {"type": ["string", "null"]},
                     "UpdatedDate": {"type": ["string", "null"], "format": "date-time"},
                 },
@@ -479,21 +477,12 @@ def test_full_table_sync_pages_by_id(monkeypatch, capsys, stream_name, record_co
     assert {q["$top"] for q in adapter.queries} == {"5"}  # noqa: S101
 
 
-@pytest.mark.parametrize(
-    ("primary_keys", "key_type"),
-    [
-        pytest.param(("Id", "Name"), "integer", id="composite key"),
-        pytest.param(("Id",), "string", id="string key"),
-    ],
-)
-def test_full_table_sync_without_a_single_integer_key_pages_by_offset(
-    monkeypatch, capsys, primary_keys, key_type
-):
-    """Sync a stream that has no single integer key by `$skip`."""
+def test_full_table_sync_with_a_composite_key_pages_by_offset(monkeypatch, capsys):
+    """Sync a stream that has a composite key by `$skip`."""
     monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Milestones", 5)
 
     adapter = DeepSkipLimitedAdapter(list(range(1, 13)), max_skip=100)
-    tap = _full_table_tap(monkeypatch, "Milestones", adapter, primary_keys, key_type)
+    tap = _full_table_tap(monkeypatch, "Milestones", adapter, ("Id", "Name"))
 
     records = _sync(tap, capsys)
 
