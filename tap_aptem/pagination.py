@@ -51,6 +51,38 @@ class ReplicationKeyPaginator(BaseAPIPaginator[ReplicationKeyToken]):
         return ReplicationKeyToken(value, skip)
 
 
+class KeysetToken(NamedTuple):
+    """The last key value of a page, or `None` for the first page."""
+
+    value: int | None
+
+
+class KeysetPaginator(BaseAPIPaginator[KeysetToken]):
+    """Paginator class that pages from the last value of a unique, ordered key.
+
+    A page that follows `$skip` makes Aptem sort the whole collection and step through
+    every skipped record first, so each page takes longer than the last, until one runs
+    past Aptem's time limit for a request. A page that starts after the last key value
+    of the previous one takes the same time wherever it is in the collection.
+    """
+
+    def __init__(self, key: str, page_size: int) -> None:
+        """Page on this key, with pages of this size."""
+        super().__init__(KeysetToken(value=None))
+        self.key = key
+        self.page_size = page_size
+
+    @override
+    def get_next(self, response):
+        records = response.json()["value"]
+
+        # Aptem rejects a page size over its limit, so only the last page is short
+        if len(records) < self.page_size:
+            return None
+
+        return KeysetToken(records[-1][self.key])
+
+
 class ODataNextLinkPaginator(BaseHATEOASPaginator):
     """Paginator class that follows the OData `@odata.nextLink` of each page."""
 
