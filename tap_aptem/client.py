@@ -89,6 +89,7 @@ BOUNDED_SYNC_STREAMS = {
 # collection, a page far into an offset sync takes longer than Aptem allows a request
 # (a 400 "Try again" error), as it sorts and steps through every skipped record first
 KEYSET_PAGED_STREAMS = {
+    "ActivityLog",
     "Users",
 }
 

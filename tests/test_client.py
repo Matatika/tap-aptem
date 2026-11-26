@@ -440,16 +440,17 @@ def _full_table_tap(monkeypatch, stream_name, adapter):
     return TapAptem(config=config, catalog=catalog)
 
 
+@pytest.mark.parametrize("stream_name", ["Users", "ActivityLog"])
 @pytest.mark.parametrize("record_count", [12, 10])
-def test_full_table_users_sync_pages_by_id(monkeypatch, capsys, record_count):
-    """Sync every user in pages that start after the last `Id`, never by `$skip`."""
-    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Users", 5)
+def test_full_table_sync_pages_by_id(monkeypatch, capsys, stream_name, record_count):
+    """Sync every record in pages that start after the last `Id`, never by `$skip`."""
+    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, stream_name, 5)
 
     # ids are not consecutive, and a count that is a multiple of the page size ends on
     # an empty page
     record_ids = [i * 3 for i in range(record_count, 0, -1)]
     adapter = DeepSkipLimitedAdapter(record_ids, max_skip=0)
-    tap = _full_table_tap(monkeypatch, "Users", adapter)
+    tap = _full_table_tap(monkeypatch, stream_name, adapter)
 
     records = _sync(tap, capsys)
 
