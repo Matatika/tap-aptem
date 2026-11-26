@@ -85,17 +85,6 @@ BOUNDED_SYNC_STREAMS = {
 }
 
 
-# streams that sync in full by their unique `Id` rather than by offset - on a large
-# collection, a page far into an offset sync takes longer than Aptem allows a request
-# (a 400 "Try again" error), as it sorts and steps through every skipped record first
-KEYSET_PAGED_STREAMS = {
-    "ActivityLog",
-    "Users",
-}
-
-KEYSET_KEY = "Id"
-
-
 class _ResumableAPIError(Exception):
     def __init__(self, message: str, response: requests.Response) -> None:
         super().__init__(message)
@@ -168,31 +157,42 @@ class AptemODataStream(RESTStream):
             self.logger.warning(e)
 
     @property
-    def pages_by_key(self):
-        """Whether this stream syncs in full in pages that follow each other by key."""
-        return (
-            self.name in KEYSET_PAGED_STREAMS
-            and self.replication_method == "FULL_TABLE"
-        )
+    def record_keys(self):
+        """Primary keys of each record in a response, mapped to their schema names."""
+        return {key: key for key in self.primary_keys or ()}
+
+    @property
+    def page_key(self):
+        """Key that a full-table sync pages by, or `None` to page by offset.
+
+        A composite key has no single value to page after, and only an integer is
+        compared and ordered alike at every layer of Aptem.
+        """
+        if self.replication_method == "FULL_TABLE" and len(self.record_keys) == 1:
+            ((key, schema_key),) = self.record_keys.items()
+
+            if "integer" in self.schema["properties"][schema_key]["type"]:
+                return key
+
+        return None
 
     @override
     def get_new_paginator(self):
-        if self.pages_by_key:
-            return KeysetPaginator(KEYSET_KEY, self.page_size)
+        if self.page_key:
+            return KeysetPaginator(self.page_key, self.page_size)
 
         if self.replication_method == "FULL_TABLE" or not self.is_sorted:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
         return ReplicationKeyPaginator(self.replication_key, self.page_size)
 
-    @staticmethod
-    def _keyset_filters(next_page_token) -> list[str]:
+    def _keyset_filters(self, next_page_token) -> list[str]:
         # the first page has no last key value to start after
         if (
             isinstance(next_page_token, KeysetToken)
             and next_page_token.value is not None
         ):
-            return [f"{KEYSET_KEY} gt {next_page_token.value}"]
+            return [f"{self.page_key} gt {next_page_token.value}"]
 
         return []
 
@@ -216,8 +216,8 @@ class AptemODataStream(RESTStream):
         replication_key_value = None
         filters = []
 
-        if self.pages_by_key:
-            params["$orderby"] = KEYSET_KEY
+        if self.page_key:
+            params["$orderby"] = self.page_key
             filters.extend(self._keyset_filters(next_page_token))
         elif isinstance(next_page_token, int):
             params["$skip"] = next_page_token
@@ -351,6 +351,12 @@ class EmbeddedCollectionStream(AptemODataStream):
     def __init__(self, /, parent_key_map: dict[str, str], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.parent_key_map = parent_key_map
+
+    @override
+    @property
+    def record_keys(self):
+        # a response holds the parent records
+        return self.parent_key_map
 
     @override
     def get_url_params(self, context, next_page_token):
