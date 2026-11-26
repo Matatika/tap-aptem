@@ -15,6 +15,8 @@ from singer_sdk.streams import RESTStream
 from typing_extensions import override
 
 from tap_aptem.pagination import (
+    KeysetPaginator,
+    KeysetToken,
     ODataNextLinkPaginator,
     ReplicationKeyPaginator,
     ReplicationKeyToken,
@@ -30,6 +32,7 @@ V1_ENTITY_RECORD_LIMITS = {
     "LearningPlanEvidences": 5000,
     "LearningPlanEvidenceWithActivityData": 5000,
     "ReviewResponses": 5000,
+    "Users": 5000,
 }
 
 STREAM_REPLICATION_KEYS = {
@@ -80,6 +83,16 @@ STREAM_REPLICATION_KEYS = {
 BOUNDED_SYNC_STREAMS = {
     "LearningPlanComponents",
 }
+
+
+# streams that sync in full by their unique `Id` rather than by offset - on a large
+# collection, a page far into an offset sync takes longer than Aptem allows a request
+# (a 400 "Try again" error), as it sorts and steps through every skipped record first
+KEYSET_PAGED_STREAMS = {
+    "Users",
+}
+
+KEYSET_KEY = "Id"
 
 
 class _ResumableAPIError(Exception):
@@ -153,12 +166,41 @@ class AptemODataStream(RESTStream):
         except _ResumableAPIError as e:
             self.logger.warning(e)
 
+    @property
+    def pages_by_key(self):
+        """Whether this stream syncs in full in pages that follow each other by key."""
+        return (
+            self.name in KEYSET_PAGED_STREAMS
+            and self.replication_method == "FULL_TABLE"
+        )
+
     @override
     def get_new_paginator(self):
+        if self.pages_by_key:
+            return KeysetPaginator(KEYSET_KEY, self.page_size)
+
         if self.replication_method == "FULL_TABLE" or not self.is_sorted:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
         return ReplicationKeyPaginator(self.replication_key, self.page_size)
+
+    @staticmethod
+    def _keyset_filters(next_page_token) -> list[str]:
+        # the first page has no last key value to start after
+        if (
+            isinstance(next_page_token, KeysetToken)
+            and next_page_token.value is not None
+        ):
+            return [f"{KEYSET_KEY} gt {next_page_token.value}"]
+
+        return []
+
+    def _selected_columns(self):
+        return [
+            column_name
+            for column_name in self.schema["properties"]
+            if self.mask[("properties", column_name)]
+        ]
 
     @override
     def get_url_params(self, context, next_page_token):
@@ -171,13 +213,15 @@ class AptemODataStream(RESTStream):
             params["$orderby"] = ",".join(reversed(self.replication_keys))
 
         replication_key_value = None
+        filters = []
 
-        if isinstance(next_page_token, int):
+        if self.pages_by_key:
+            params["$orderby"] = KEYSET_KEY
+            filters.extend(self._keyset_filters(next_page_token))
+        elif isinstance(next_page_token, int):
             params["$skip"] = next_page_token
         elif isinstance(next_page_token, ReplicationKeyToken):
             replication_key_value, params["$skip"] = next_page_token
-
-        filters = []
 
         # null values are ordered first, and only requested without a start date
         if replication_key_value is not None:
@@ -203,13 +247,7 @@ class AptemODataStream(RESTStream):
         if filters:
             params["$filter"] = " and ".join(filters)
 
-        selected_columns = [
-            column_name
-            for column_name in self.schema["properties"]
-            if self.mask[("properties", column_name)]
-        ]
-
-        if selected_columns:
+        if selected_columns := self._selected_columns():
             params["$select"] = ",".join(selected_columns)
 
         return params

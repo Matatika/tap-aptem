@@ -370,3 +370,109 @@ def test_sync_gets_every_record_when_a_page_end_changes(monkeypatch, capsys):
     records = _sync(tap, capsys)
 
     assert {record["Id"] for record in records} == {1, 2, 3, 4}  # noqa: S101
+
+
+class DeepSkipLimitedAdapter(BaseAdapter):
+    """Serve records by `Id`, and fail a request that skips too many, as Aptem does."""
+
+    def __init__(self, record_ids, *, max_skip) -> None:
+        """Serve records with these ids, and fail a request skipping over `max_skip`."""
+        super().__init__()
+        self.record_ids = record_ids
+        self.max_skip = max_skip
+        self.queries = []
+
+    def send(self, request, **kwargs):  # noqa: ARG002, D102
+        query = {k: v[0] for k, v in parse_qs(urlparse(request.url).query).items()}
+        self.queries.append(query)
+
+        response = requests.Response()
+        response.request = request
+
+        if int(query.get("$skip", 0)) > self.max_skip:
+            response.status_code = 400
+            body = {"error": {"message": "An error occurred. Try again."}}
+        else:
+            after = int(query.get("$filter", "Id gt 0").removeprefix("Id gt "))
+            ids = sorted(i for i in self.record_ids if i > after)
+            skip = int(query.get("$skip", 0))
+
+            response.status_code = 200
+            body = {
+                "value": [
+                    {"Id": i, "Name": f"user {i}"}
+                    for i in ids[skip : skip + int(query["$top"])]
+                ],
+            }
+
+        response.raw = io.BytesIO(json.dumps(body).encode())
+        return response
+
+    def close(self):  # noqa: D102
+        pass
+
+
+def _full_table_tap(monkeypatch, stream_name, adapter):
+    def discover_streams(tap):
+        stream = AptemODataStream(
+            tap,
+            name=stream_name,
+            schema={
+                "properties": {
+                    "Id": {"type": "integer"},
+                    "Name": {"type": ["string", "null"]},
+                    "UpdatedDate": {"type": ["string", "null"], "format": "date-time"},
+                },
+            },
+            path=f"/{stream_name}",
+        )
+        stream.primary_keys = ("Id",)
+        stream.replication_key = "UpdatedDate"
+        stream.requests_session.mount("https://", adapter)
+        return [stream]
+
+    monkeypatch.setattr(TapAptem, "discover_streams", discover_streams)
+    config = {"tenant_name": "tenant", "api_token": "token"}
+
+    catalog = TapAptem(config=config).catalog_dict
+    catalog["streams"][0]["replication_method"] = "FULL_TABLE"
+
+    return TapAptem(config=config, catalog=catalog)
+
+
+@pytest.mark.parametrize("record_count", [12, 10])
+def test_full_table_users_sync_pages_by_id(monkeypatch, capsys, record_count):
+    """Sync every user in pages that start after the last `Id`, never by `$skip`."""
+    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Users", 5)
+
+    # ids are not consecutive, and a count that is a multiple of the page size ends on
+    # an empty page
+    record_ids = [i * 3 for i in range(record_count, 0, -1)]
+    adapter = DeepSkipLimitedAdapter(record_ids, max_skip=0)
+    tap = _full_table_tap(monkeypatch, "Users", adapter)
+
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == sorted(record_ids)  # noqa: S101
+    assert [q.get("$filter") for q in adapter.queries] == [  # noqa: S101
+        None,
+        "Id gt 15",
+        "Id gt 30",
+    ]
+    assert all("$skip" not in q for q in adapter.queries)  # noqa: S101
+    assert {q["$orderby"] for q in adapter.queries} == {"Id"}  # noqa: S101
+    assert {q["$top"] for q in adapter.queries} == {"5"}  # noqa: S101
+
+
+def test_full_table_sync_of_other_streams_pages_by_offset(monkeypatch, capsys):
+    """Keep syncing a stream that is not paged by key by `$skip`."""
+    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Milestones", 5)
+
+    adapter = DeepSkipLimitedAdapter(list(range(1, 13)), max_skip=100)
+    tap = _full_table_tap(monkeypatch, "Milestones", adapter)
+
+    records = _sync(tap, capsys)
+
+    assert [record["Id"] for record in records] == list(range(1, 13))  # noqa: S101
+    # an offset sync ends on the first empty page
+    assert [q["$skip"] for q in adapter.queries] == ["0", "5", "10", "15"]  # noqa: S101
