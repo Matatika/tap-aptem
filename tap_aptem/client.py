@@ -181,16 +181,6 @@ class AptemODataStream(RESTStream):
 
         return ReplicationKeyPaginator(self.replication_key, self.page_size)
 
-    def _keyset_filters(self, next_page_token) -> list[str]:
-        # the first page has no last key value to start after
-        if (
-            isinstance(next_page_token, KeysetToken)
-            and next_page_token.value is not None
-        ):
-            return [f"{self._page_key} gt {next_page_token.value}"]
-
-        return []
-
     def _selected_columns(self):
         return [
             column_name
@@ -199,40 +189,42 @@ class AptemODataStream(RESTStream):
         ]
 
     @override
-    def get_url_params(self, context, next_page_token):
+    def get_url_params(self, context, next_page_token):  # noqa: C901
         params = super().get_url_params(context, next_page_token)
         params["$top"] = self.page_size
 
-        if self.replication_keys:
+        if selected_columns := self._selected_columns():
+            params["$select"] = ",".join(selected_columns)
+
+        if self._page_key:
+            params["$orderby"] = self._page_key
+        elif self.replication_keys:
             # records can page by offset, so order them first by the last fallback key,
             # which a change during the sync is least likely to alter
             params["$orderby"] = ",".join(reversed(self.replication_keys))
 
-        replication_key_value = None
         filters = []
+        replication_key_value = None
 
-        if self._page_key:
-            params["$orderby"] = self._page_key
-            filters.extend(self._keyset_filters(next_page_token))
-        elif isinstance(next_page_token, int):
+        if isinstance(next_page_token, int):
             params["$skip"] = next_page_token
+        elif isinstance(next_page_token, KeysetToken):
+            filters.append(f"{self._page_key} gt {next_page_token.value}")
         elif isinstance(next_page_token, ReplicationKeyToken):
             replication_key_value, params["$skip"] = next_page_token
 
-        # null values are ordered first, and only requested without a start date
+        # a later page starts from its last replication key value, not the start date -
+        # the value is null only for a page of null values, which sort first and sync
+        # only without a start date
         if replication_key_value is not None:
             filters.append(f"{self.replication_key} ge {replication_key_value}")
         elif starting_timestamp := self.get_starting_timestamp(context):
+            start = starting_timestamp.isoformat()
             keys = self.replication_keys
-            key_filters = (
-                " and ".join(
-                    [
-                        *(f"{null_key} eq null" for null_key in keys[:i]),
-                        f"{key} ge {starting_timestamp.isoformat()}",
-                    ]
-                )
+            key_filters = [
+                " and ".join([*(f"{k} eq null" for k in keys[:i]), f"{key} ge {start}"])
                 for i, key in enumerate(keys)
-            )
+            ]
             filters.append(f"({' or '.join(key_filters)})")
 
         if self.name in BOUNDED_SYNC_STREAMS and (
@@ -242,9 +234,6 @@ class AptemODataStream(RESTStream):
 
         if filters:
             params["$filter"] = " and ".join(filters)
-
-        if selected_columns := self._selected_columns():
-            params["$select"] = ",".join(selected_columns)
 
         return params
 
