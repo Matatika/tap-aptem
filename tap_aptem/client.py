@@ -85,17 +85,6 @@ BOUNDED_SYNC_STREAMS = {
 }
 
 
-# streams that sync in full by their unique `Id` rather than by offset - on a large
-# collection, a page far into an offset sync takes longer than Aptem allows a request
-# (a 400 "Try again" error), as it sorts and steps through every skipped record first
-KEYSET_PAGED_STREAMS = {
-    "ActivityLog",
-    "Users",
-}
-
-KEYSET_KEY = "Id"
-
-
 class _ResumableAPIError(Exception):
     def __init__(self, message: str, response: requests.Response) -> None:
         super().__init__(message)
@@ -168,33 +157,29 @@ class AptemODataStream(RESTStream):
             self.logger.warning(e)
 
     @property
-    def pages_by_key(self):
-        """Whether this stream syncs in full in pages that follow each other by key."""
-        return (
-            self.name in KEYSET_PAGED_STREAMS
-            and self.replication_method == "FULL_TABLE"
-        )
+    def keyset_candidates(self):
+        """Keys that a full-table sync can page by, if there is only one."""
+        return self.primary_keys
+
+    @property
+    def _page_key(self):
+        # a composite key has no single value to page after
+        keys = self.keyset_candidates
+
+        if self.replication_method == "FULL_TABLE" and len(keys) == 1:
+            return keys[0]
+
+        return None
 
     @override
     def get_new_paginator(self):
-        if self.pages_by_key:
-            return KeysetPaginator(KEYSET_KEY, self.page_size)
+        if self._page_key:
+            return KeysetPaginator(self._page_key, self.page_size)
 
         if self.replication_method == "FULL_TABLE" or not self.is_sorted:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
 
         return ReplicationKeyPaginator(self.replication_key, self.page_size)
-
-    @staticmethod
-    def _keyset_filters(next_page_token) -> list[str]:
-        # the first page has no last key value to start after
-        if (
-            isinstance(next_page_token, KeysetToken)
-            and next_page_token.value is not None
-        ):
-            return [f"{KEYSET_KEY} gt {next_page_token.value}"]
-
-        return []
 
     def _selected_columns(self):
         return [
@@ -204,40 +189,42 @@ class AptemODataStream(RESTStream):
         ]
 
     @override
-    def get_url_params(self, context, next_page_token):
+    def get_url_params(self, context, next_page_token):  # noqa: C901
         params = super().get_url_params(context, next_page_token)
         params["$top"] = self.page_size
 
-        if self.replication_keys:
+        if selected_columns := self._selected_columns():
+            params["$select"] = ",".join(selected_columns)
+
+        if self._page_key:
+            params["$orderby"] = self._page_key
+        elif self.replication_keys:
             # records can page by offset, so order them first by the last fallback key,
             # which a change during the sync is least likely to alter
             params["$orderby"] = ",".join(reversed(self.replication_keys))
 
-        replication_key_value = None
         filters = []
+        replication_key_value = None
 
-        if self.pages_by_key:
-            params["$orderby"] = KEYSET_KEY
-            filters.extend(self._keyset_filters(next_page_token))
-        elif isinstance(next_page_token, int):
+        if isinstance(next_page_token, int):
             params["$skip"] = next_page_token
+        elif isinstance(next_page_token, KeysetToken):
+            filters.append(f"{self._page_key} gt {next_page_token.value}")
         elif isinstance(next_page_token, ReplicationKeyToken):
             replication_key_value, params["$skip"] = next_page_token
 
-        # null values are ordered first, and only requested without a start date
+        # a later page starts from its last replication key value, not the start date -
+        # the value is null only for a page of null values, which sort first and sync
+        # only without a start date
         if replication_key_value is not None:
             filters.append(f"{self.replication_key} ge {replication_key_value}")
         elif starting_timestamp := self.get_starting_timestamp(context):
+            start = starting_timestamp.isoformat()
             keys = self.replication_keys
-            key_filters = (
-                " and ".join(
-                    [
-                        *(f"{null_key} eq null" for null_key in keys[:i]),
-                        f"{key} ge {starting_timestamp.isoformat()}",
-                    ]
-                )
+            key_filters = [
+                " and ".join([*(f"{k} eq null" for k in keys[:i]), f"{key} ge {start}"])
                 for i, key in enumerate(keys)
-            )
+            ]
             filters.append(f"({' or '.join(key_filters)})")
 
         if self.name in BOUNDED_SYNC_STREAMS and (
@@ -247,9 +234,6 @@ class AptemODataStream(RESTStream):
 
         if filters:
             params["$filter"] = " and ".join(filters)
-
-        if selected_columns := self._selected_columns():
-            params["$select"] = ",".join(selected_columns)
 
         return params
 
@@ -351,6 +335,12 @@ class EmbeddedCollectionStream(AptemODataStream):
     def __init__(self, /, parent_key_map: dict[str, str], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.parent_key_map = parent_key_map
+
+    @override
+    @property
+    def keyset_candidates(self):
+        # a response holds the parent records, so a sync pages by the parent key
+        return list(self.parent_key_map)
 
     @override
     def get_url_params(self, context, next_page_token):

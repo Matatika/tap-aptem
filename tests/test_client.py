@@ -13,7 +13,11 @@ from requests.adapters import BaseAdapter
 from singer_sdk.exceptions import RetriableAPIError
 
 from tap_aptem import client
-from tap_aptem.client import AptemODataStream, AptemODataV2Stream
+from tap_aptem.client import (
+    AptemODataStream,
+    AptemODataV2Stream,
+    EmbeddedCollectionStream,
+)
 from tap_aptem.tap import TapAptem
 
 RECORD_COUNT = 10_500
@@ -397,13 +401,21 @@ class DeepSkipLimitedAdapter(BaseAdapter):
             ids = sorted(i for i in self.record_ids if i > after)
             skip = int(query.get("$skip", 0))
 
+            records = [
+                {"Id": i, "Name": f"user {i}"}
+                for i in ids[skip : skip + int(query["$top"])]
+            ]
+
+            if select := query.get("$select"):
+                records = [
+                    {k: r[k] for k in select.split(",") if k in r} for r in records
+                ]
+
+            if expand := query.get("$expand"):
+                records = [r | {expand: [{"Id": r["Id"] * 10}]} for r in records]
+
             response.status_code = 200
-            body = {
-                "value": [
-                    {"Id": i, "Name": f"user {i}"}
-                    for i in ids[skip : skip + int(query["$top"])]
-                ],
-            }
+            body = {"value": records}
 
         response.raw = io.BytesIO(json.dumps(body).encode())
         return response
@@ -412,7 +424,7 @@ class DeepSkipLimitedAdapter(BaseAdapter):
         pass
 
 
-def _full_table_tap(monkeypatch, stream_name, adapter):
+def _full_table_tap(monkeypatch, stream_name, adapter, primary_keys=("Id",)):
     def discover_streams(tap):
         stream = AptemODataStream(
             tap,
@@ -426,7 +438,7 @@ def _full_table_tap(monkeypatch, stream_name, adapter):
             },
             path=f"/{stream_name}",
         )
-        stream.primary_keys = ("Id",)
+        stream.primary_keys = primary_keys
         stream.replication_key = "UpdatedDate"
         stream.requests_session.mount("https://", adapter)
         return [stream]
@@ -440,7 +452,7 @@ def _full_table_tap(monkeypatch, stream_name, adapter):
     return TapAptem(config=config, catalog=catalog)
 
 
-@pytest.mark.parametrize("stream_name", ["Users", "ActivityLog"])
+@pytest.mark.parametrize("stream_name", ["Users", "Milestones"])
 @pytest.mark.parametrize("record_count", [12, 10])
 def test_full_table_sync_pages_by_id(monkeypatch, capsys, stream_name, record_count):
     """Sync every record in pages that start after the last `Id`, never by `$skip`."""
@@ -465,15 +477,50 @@ def test_full_table_sync_pages_by_id(monkeypatch, capsys, stream_name, record_co
     assert {q["$top"] for q in adapter.queries} == {"5"}  # noqa: S101
 
 
-def test_full_table_sync_of_other_streams_pages_by_offset(monkeypatch, capsys):
-    """Keep syncing a stream that is not paged by key by `$skip`."""
+def test_full_table_sync_with_a_composite_key_pages_by_offset(monkeypatch, capsys):
+    """Sync a stream that has a composite key by `$skip`."""
     monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Milestones", 5)
 
     adapter = DeepSkipLimitedAdapter(list(range(1, 13)), max_skip=100)
-    tap = _full_table_tap(monkeypatch, "Milestones", adapter)
+    tap = _full_table_tap(monkeypatch, "Milestones", adapter, ("Id", "Name"))
 
     records = _sync(tap, capsys)
 
     assert [record["Id"] for record in records] == list(range(1, 13))  # noqa: S101
     # an offset sync ends on the first empty page
     assert [q["$skip"] for q in adapter.queries] == ["0", "5", "10", "15"]  # noqa: S101
+
+
+def test_embedded_collection_sync_pages_by_parent_key(monkeypatch, capsys):
+    """Sync an embedded collection in pages that start after the last parent key."""
+    monkeypatch.setitem(client.V1_ENTITY_RECORD_LIMITS, "Markers", 5)
+    adapter = DeepSkipLimitedAdapter(list(range(1, 13)), max_skip=0)
+
+    def discover_streams(tap):
+        stream = EmbeddedCollectionStream(
+            {"Id": "UserId"},
+            tap=tap,
+            name="Markers",
+            schema={
+                "properties": {
+                    "Id": {"type": "integer"},
+                    "UserId": {"type": "integer"},
+                },
+            },
+            path="/Users",
+        )
+        stream.primary_keys = ("Id", "UserId")
+        stream.requests_session.mount("https://", adapter)
+        return [stream]
+
+    monkeypatch.setattr(TapAptem, "discover_streams", discover_streams)
+    tap = TapAptem(config={"tenant_name": "tenant", "api_token": "token"})
+
+    records = _sync(tap, capsys)
+
+    assert [record["UserId"] for record in records] == list(range(1, 13))  # noqa: S101
+    assert [q.get("$filter") for q in adapter.queries] == [  # noqa: S101
+        None,
+        "Id gt 5",
+        "Id gt 10",
+    ]

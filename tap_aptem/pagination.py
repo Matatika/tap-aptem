@@ -52,12 +52,12 @@ class ReplicationKeyPaginator(BaseAPIPaginator[ReplicationKeyToken]):
 
 
 class KeysetToken(NamedTuple):
-    """The last key value of a page, or `None` for the first page."""
+    """The last key value of a page."""
 
-    value: int | None
+    value: int
 
 
-class KeysetPaginator(BaseAPIPaginator[KeysetToken]):
+class KeysetPaginator(BaseAPIPaginator[KeysetToken | None]):
     """Paginator class that pages from the last value of a unique, ordered key.
 
     A page that follows `$skip` makes Aptem sort the whole collection and step through
@@ -68,7 +68,7 @@ class KeysetPaginator(BaseAPIPaginator[KeysetToken]):
 
     def __init__(self, key: str, page_size: int) -> None:
         """Page on this key, with pages of this size."""
-        super().__init__(KeysetToken(value=None))
+        super().__init__(None)
         self.key = key
         self.page_size = page_size
 
