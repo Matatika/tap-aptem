@@ -157,20 +157,24 @@ class AptemODataStream(RESTStream):
             self.logger.warning(e)
 
     @property
-    def page_key(self):
-        """Key that a full-table sync pages by, or `None` to page by offset.
+    def keyset_candidates(self):
+        """Keys that a full-table sync can page by, if there is only one."""
+        return self.primary_keys
 
-        A composite key has no single value to page after.
-        """
-        if self.replication_method == "FULL_TABLE" and len(self.primary_keys) == 1:
-            return self.primary_keys[0]
+    @property
+    def _page_key(self):
+        # a composite key has no single value to page after
+        keys = self.keyset_candidates
+
+        if self.replication_method == "FULL_TABLE" and len(keys) == 1:
+            return keys[0]
 
         return None
 
     @override
     def get_new_paginator(self):
-        if self.page_key:
-            return KeysetPaginator(self.page_key, self.page_size)
+        if self._page_key:
+            return KeysetPaginator(self._page_key, self.page_size)
 
         if self.replication_method == "FULL_TABLE" or not self.is_sorted:
             return BaseOffsetPaginator(start_value=0, page_size=self.page_size)
@@ -183,7 +187,7 @@ class AptemODataStream(RESTStream):
             isinstance(next_page_token, KeysetToken)
             and next_page_token.value is not None
         ):
-            return [f"{self.page_key} gt {next_page_token.value}"]
+            return [f"{self._page_key} gt {next_page_token.value}"]
 
         return []
 
@@ -207,8 +211,8 @@ class AptemODataStream(RESTStream):
         replication_key_value = None
         filters = []
 
-        if self.page_key:
-            params["$orderby"] = self.page_key
+        if self._page_key:
+            params["$orderby"] = self._page_key
             filters.extend(self._keyset_filters(next_page_token))
         elif isinstance(next_page_token, int):
             params["$skip"] = next_page_token
@@ -345,12 +349,9 @@ class EmbeddedCollectionStream(AptemODataStream):
 
     @override
     @property
-    def page_key(self):
+    def keyset_candidates(self):
         # a response holds the parent records, so a sync pages by the parent key
-        if len(self.parent_key_map) == 1:
-            return next(iter(self.parent_key_map))
-
-        return None
+        return list(self.parent_key_map)
 
     @override
     def get_url_params(self, context, next_page_token):
